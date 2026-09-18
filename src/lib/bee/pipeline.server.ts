@@ -125,7 +125,7 @@ export async function processEvidence(
     claims.find((c) => c.field_key === "legal_entity_name") ?? claims.find((c) => c.field_key === "measured_entity");
   const regClaim = claims.find((c) => c.field_key === "registration_number");
   const agencyClaim = claims.find((c) => c.field_key === "verification_agency");
-  const agencyId = await resolveAgency(db, workingValue(agencyClaim ?? { field_key: "verification_agency" } as ExtractedClaim));
+  const agencyId = await resolveAgency(db, workingValue(agencyClaim));
   if (agencyId) {
     await db.query("update evidence set verifier_agency_id = $2, updated_at = now() where id = $1", [
       input.evidenceId,
@@ -134,8 +134,8 @@ export async function processEvidence(
   }
 
   const match = await matchEntity(db, {
-    extractedName: workingValue(nameClaim as ExtractedClaim) ?? nameClaim?.raw_value,
-    extractedReg: workingValue(regClaim as ExtractedClaim) ?? regClaim?.raw_value,
+    extractedName: workingValue(nameClaim) ?? nameClaim?.raw_value ?? null,
+    extractedReg: workingValue(regClaim) ?? regClaim?.raw_value ?? null,
     suggestedEntityId: input.suggestedEntityId,
   });
 
@@ -323,6 +323,37 @@ export async function processEvidence(
   return { reviewItemId, autoPublished: false, extractionFailed: false, warnings };
 }
 
+export async function processEvidenceSafe(
+  db: Sql,
+  input: {
+    evidenceId: string;
+    text: string;
+    suggestedEntityId?: string | null;
+    actorType: string;
+    actorId: string;
+    jobId?: string | null;
+  },
+): Promise<{ reviewItemId: string | null; autoPublished: boolean; extractionFailed: boolean; warnings: string[] }> {
+  try {
+    return await processEvidence(db, input);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const reviewItemId = await ensureReviewItem(db, {
+      type: "extraction_failed",
+      reason: message,
+      severity: "high",
+      entityId: input.suggestedEntityId,
+      evidenceId: input.evidenceId,
+      jobId: input.jobId,
+    });
+    await db.query(
+      "update evidence set review_state = 'required', extraction_state = 'failed', updated_at = now() where id = $1",
+      [input.evidenceId],
+    );
+    return { reviewItemId, autoPublished: false, extractionFailed: true, warnings: [message] };
+  }
+}
+
 export async function ingestDocument(
   db: Sql,
   input: {
@@ -492,7 +523,7 @@ export async function ingestDocument(
     jobId: input.jobId,
   });
 
-  const processed = await processEvidence(db, {
+  const processed = await processEvidenceSafe(db, {
     evidenceId,
     text: parsed.text,
     suggestedEntityId: input.entityId,
@@ -533,7 +564,7 @@ export async function rerunExtraction(db: Sql, evidenceId: string, actorId: stri
     });
     return { extractionFailed: true };
   }
-  return processEvidence(db, {
+  return processEvidenceSafe(db, {
     evidenceId,
     text: parsed.text,
     actorType: "admin",

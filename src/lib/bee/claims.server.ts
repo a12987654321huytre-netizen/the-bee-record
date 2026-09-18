@@ -5,7 +5,8 @@ import { normalizeName, normalizeRegistration } from "./normalize.ts";
 import type { Sql } from "./db-types.ts";
 import type { ExtractedClaim } from "./types.ts";
 
-export function workingValue(claim: ExtractedClaim): string | null {
+export function workingValue(claim: ExtractedClaim | null | undefined): string | null {
+  if (!claim) return null;
   const edited = claim.edited_value?.trim();
   if (edited) return edited;
   return claim.normalized_value ?? claim.structured_value ?? claim.raw_value ?? null;

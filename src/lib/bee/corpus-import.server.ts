@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { addAlias, createEntity, createRelationship, setClassification } from "./entities.server.ts";
 import { sha256HexNode } from "./hash.ts";
-import { ingestDocument } from "./pipeline.server.ts";
+import { ingestDocument, rerunExtraction } from "./pipeline.server.ts";
 import { createSource } from "./crawler.server.ts";
 import { getExpiringSoonDays } from "./settings.server.ts";
 import { publishEvidence } from "./publication.server.ts";
@@ -56,6 +56,7 @@ export type ImportItemResult = {
     published?: boolean;
     reviewItemId?: string | null;
     error?: string;
+    retried?: boolean;
   }>;
   sources: Array<{ url: string; sourceId?: string; error?: string }>;
   error?: string;
@@ -120,9 +121,101 @@ function reviewUnsafe(type: string | null | undefined): boolean {
   return (
     type === "registration_number_conflict" ||
     type === "conflicting_evidence" ||
-    type === "manual_lock_conflict" ||
-    type === "uncertain_entity_match"
+    type === "manual_lock_conflict"
   );
+}
+
+async function pendingReviewId(db: Sql, evidenceId: string): Promise<string | null> {
+  const rows = await db.query<{ id: string; type: string }>(
+    `select id, type from review_items
+     where evidence_id = $1 and status in ('pending', 'in_review')
+     order by created_at desc
+     limit 1`,
+    [evidenceId],
+  );
+  if (!rows[0]) return null;
+  if (reviewUnsafe(rows[0].type)) return null;
+  return rows[0].id;
+}
+
+export async function publishLinkedEvidence(
+  db: Sql,
+  input: { evidenceId: string; entityId: string; expiringSoonDays: number },
+): Promise<{ published: boolean; error?: string; reviewItemId?: string | null }> {
+  const evidence = await db.query<{ publication_state: string; extraction_state: string; asset_id: string | null }>(
+    "select publication_state, extraction_state, asset_id from evidence where id = $1",
+    [input.evidenceId],
+  );
+  const row = evidence[0];
+  if (!row) return { published: false, error: "Evidence not found." };
+  if (row.publication_state === "published") return { published: true };
+
+  if (row.extraction_state !== "extracted" && row.asset_id) {
+    try {
+      await rerunExtraction(db, input.evidenceId, ACTOR);
+    } catch (err) {
+      return { published: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  const reviewItemId = await pendingReviewId(db, input.evidenceId);
+  const unsafe = await db.query<{ type: string }>(
+    `select type from review_items
+     where evidence_id = $1 and status in ('pending', 'in_review')
+     order by created_at desc limit 1`,
+    [input.evidenceId],
+  );
+  if (reviewUnsafe(unsafe[0]?.type)) {
+    return { published: false, error: `Held for review: ${unsafe[0].type}`, reviewItemId: null };
+  }
+
+  const published = await publishEvidence(db, {
+    evidenceId: input.evidenceId,
+    entityId: input.entityId,
+    actorType: "import",
+    actorId: ACTOR,
+    reviewItemId,
+    reason: "Initial corpus import: official-domain evidence linked to the named legal entity.",
+    expiringSoonDays: input.expiringSoonDays,
+  });
+  if (published.ok) return { published: true, reviewItemId };
+  return { published: false, error: published.error, reviewItemId };
+}
+
+export async function retryUnpublished(db: Sql, limit = 8): Promise<{
+  attempted: number;
+  published: number;
+  results: Array<{ evidenceId: string; entityId: string; published: boolean; error?: string }>;
+}> {
+  const rows = await db.query<{ evidence_id: string; entity_id: string }>(
+    `select e.id as evidence_id, el.entity_id
+     from evidence e
+     join evidence_entity_links el on el.evidence_id = e.id
+     join entities n on n.id = el.entity_id
+     where e.publication_state = 'unpublished'
+       and n.merged_into_id is null
+     order by e.created_at asc
+     limit $1`,
+    [limit],
+  );
+  const days = await getExpiringSoonDays(db);
+  const results: Array<{ evidenceId: string; entityId: string; published: boolean; error?: string }> = [];
+  let published = 0;
+  for (const row of rows) {
+    const out = await publishLinkedEvidence(db, {
+      evidenceId: row.evidence_id,
+      entityId: row.entity_id,
+      expiringSoonDays: days,
+    });
+    if (out.published) published += 1;
+    results.push({
+      evidenceId: row.evidence_id,
+      entityId: row.entity_id,
+      published: out.published,
+      error: out.error,
+    });
+  }
+  return { attempted: rows.length, published, results };
 }
 
 export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<ImportItemResult> {
@@ -271,6 +364,31 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
         reviewItemId: ingested.reviewItemId,
       };
       if (ingested.duplicate) {
+        const links = await db.query<{ entity_id: string }>(
+          "select entity_id from evidence_entity_links where evidence_id = $1",
+          [ingested.evidenceId],
+        );
+        const linkedHere = links.some((l) => l.entity_id === entityId);
+        const publishedAlready = await db.query<{ publication_state: string }>(
+          "select publication_state from evidence where id = $1",
+          [ingested.evidenceId],
+        );
+        if (publishedAlready[0]?.publication_state === "published" || !linkedHere) {
+          result.evidence.push(row);
+          continue;
+        }
+        if (shouldPublish) {
+          const retried = await publishLinkedEvidence(db, {
+            evidenceId: ingested.evidenceId,
+            entityId,
+            expiringSoonDays: days,
+          });
+          row.retried = true;
+          row.published = retried.published;
+          if (retried.published) result.published = true;
+          else row.error = retried.error;
+          if (retried.reviewItemId) row.reviewItemId = retried.reviewItemId;
+        }
         result.evidence.push(row);
         continue;
       }
@@ -302,6 +420,8 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
           } else {
             row.error = published.error;
           }
+        } else {
+          row.error = "Held for review due to a conflict.";
         }
       }
       result.evidence.push(row);

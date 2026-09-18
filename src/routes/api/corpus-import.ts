@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   authorizeCorpusImport,
   importCorpusBatch,
+  retryUnpublished,
   type CorpusItem,
 } from "@/lib/bee/corpus-import.server";
 import { runDueSources, runSourceCheck } from "@/lib/bee/crawler.server";
@@ -37,9 +38,10 @@ const itemSchema = z.object({
 });
 
 const bodySchema = z.object({
-  action: z.enum(["import", "crawl", "stats"]).optional(),
+  action: z.enum(["import", "crawl", "stats", "retry"]).optional(),
   items: z.array(itemSchema).min(1).max(3).optional(),
   crawlLimit: z.number().int().min(1).max(8).optional(),
+  retryLimit: z.number().int().min(1).max(12).optional(),
   sourceId: z.string().optional(),
 });
 
@@ -93,6 +95,10 @@ export const Route = createFileRoute("/api/corpus-import")({
         const action = parsed.data.action ?? "import";
         if (action === "stats") {
           return Response.json(await stats(db));
+        }
+        if (action === "retry") {
+          const out = await retryUnpublished(db, parsed.data.retryLimit ?? 6);
+          return Response.json({ ok: true, ...out, ...(await stats(db)) });
         }
         if (action === "crawl") {
           if (parsed.data.sourceId) {

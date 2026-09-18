@@ -9,6 +9,7 @@ import { checkFetchUrl } from "./ssrf.ts";
 import { hashPassword, verifyPassword, checkPasswordChange, passwordPolicyError } from "./passwords.ts";
 import { evaluateAutomation, validateClaims } from "./validation.ts";
 import { formatWhen } from "./format.ts";
+import { workingValue } from "./claims.server.ts";
 
 describe("dates", () => {
   it("parses ISO and long forms", () => {
@@ -100,6 +101,13 @@ describe("deterministic extractor", () => {
     assert.equal(fields.bee_level, "4");
     assert.equal(fields.registration_number, "201012345607");
     assert.equal(fields.issue_date, "2025-09-26");
+  });
+});
+
+describe("workingValue", () => {
+  it("does not throw on missing claims", () => {
+    assert.equal(workingValue(undefined), null);
+    assert.equal(workingValue(null), null);
   });
 });
 
