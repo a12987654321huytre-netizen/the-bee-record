@@ -249,7 +249,7 @@ create table if not exists evidence (
   lifecycle_state text not null default 'discovered'
     check (lifecycle_state in (
       'discovered', 'current', 'historical', 'superseded', 'expired',
-      'expiring_soon', 'disputed'
+      'expiring_soon', 'disputed', 'unknown_validity'
     )),
   source_live_status text not null default 'unknown'
     check (source_live_status in ('live', 'missing', 'unknown', 'redirected')),

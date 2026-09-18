@@ -15,6 +15,7 @@ import {
   resetRepairRuns,
   cleanupGarbageAgencies,
   sanitizeEvidenceBatch,
+  ensureUnknownValidityConstraint,
 } from "@/lib/bee/repair.server";
 import { sql } from "@/lib/bee/sql.server";
 
@@ -52,7 +53,7 @@ const bodySchema = z.object({
   crawlLimit: z.number().int().min(1).max(8).optional(),
   retryLimit: z.number().int().min(1).max(12).optional(),
   repairLimit: z.number().int().min(1).max(12).optional(),
-  phase: z.enum(["extract", "lifecycle", "reset", "cleanup", "sanitize"]).optional(),
+  phase: z.enum(["extract", "lifecycle", "reset", "cleanup", "sanitize", "schema"]).optional(),
   afterId: z.string().nullable().optional(),
   sourceId: z.string().optional(),
 });
@@ -86,6 +87,11 @@ export const Route = createFileRoute("/api/corpus-import")({
         }
         if (action === "repair") {
           const phase = parsed.data.phase ?? "extract";
+          try {
+          if (phase === "schema") {
+            const out = await ensureUnknownValidityConstraint(db);
+            return Response.json({ ...(await stats(db)), phase, ...out });
+          }
           if (phase === "reset") {
             const out = await resetRepairRuns(db);
             return Response.json({ ...(await stats(db)), phase, ...out });
@@ -153,6 +159,20 @@ export const Route = createFileRoute("/api/corpus-import")({
               error: r.error,
             })),
           });
+          } catch (err) {
+            const e = err as { message?: string; code?: string; detail?: string; constraint?: string };
+            return Response.json(
+              {
+                ok: false,
+                error: e?.message ?? String(err),
+                code: e?.code ?? null,
+                detail: e?.detail ?? null,
+                constraint: e?.constraint ?? null,
+                phase,
+              },
+              { status: 500 },
+            );
+          }
         }
         if (action === "retry") {
           const out = await retryUnpublished(db, parsed.data.retryLimit ?? 6);

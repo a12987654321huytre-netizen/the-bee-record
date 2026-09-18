@@ -18,6 +18,60 @@ import type { ExtractedClaim } from "./types.ts";
 
 const ACTOR = "repair:corpus-2026";
 
+function quoteIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Production Neon still has the 0002 CHECK without unknown_validity until
+ * 0003 applies. Repair self-heals so a skipped build-time migrate cannot
+ * keep treating missing expiry as Current.
+ */
+export async function ensureUnknownValidityConstraint(db: Sql): Promise<{
+  dropped: string[];
+  added: boolean;
+  alreadyOk: boolean;
+}> {
+  const rows = await db.query<{ conname: string; def: string }>(
+    `SELECT c.conname, pg_get_constraintdef(c.oid) AS def
+     FROM pg_constraint c
+     JOIN pg_class t ON t.oid = c.conrelid
+     JOIN pg_namespace n ON n.oid = t.relnamespace
+     WHERE t.relname = 'evidence'
+       AND n.nspname = current_schema()
+       AND c.contype = 'c'
+       AND pg_get_constraintdef(c.oid) ILIKE '%lifecycle_state%'`,
+  );
+  const dropped: string[] = [];
+  for (const row of rows) {
+    if (/unknown_validity/i.test(row.def)) continue;
+    await db.query(`ALTER TABLE evidence DROP CONSTRAINT ${quoteIdent(row.conname)}`);
+    dropped.push(row.conname);
+  }
+  const remaining = await db.query<{ n: number }>(
+    `SELECT count(*)::int AS n
+     FROM pg_constraint c
+     JOIN pg_class t ON t.oid = c.conrelid
+     JOIN pg_namespace n ON n.oid = t.relnamespace
+     WHERE t.relname = 'evidence'
+       AND n.nspname = current_schema()
+       AND c.contype = 'c'
+       AND pg_get_constraintdef(c.oid) ILIKE '%unknown_validity%'`,
+  );
+  if ((remaining[0]?.n ?? 0) > 0) {
+    return { dropped, added: false, alreadyOk: dropped.length === 0 };
+  }
+  await db.query(
+    `ALTER TABLE evidence
+       ADD CONSTRAINT evidence_lifecycle_state_check
+       CHECK (lifecycle_state IN (
+         'discovered', 'current', 'historical', 'superseded', 'expired',
+         'expiring_soon', 'disputed', 'unknown_validity'
+       ))`,
+  );
+  return { dropped, added: true, alreadyOk: false };
+}
+
 export type RepairEvidenceResult = {
   evidenceId: string;
   skipped: boolean;
@@ -336,6 +390,7 @@ export async function repairEvidenceBatch(
      limit $2`,
     [PARSER_REPAIR, limit],
   );
+  await ensureUnknownValidityConstraint(db);
   const results: RepairEvidenceResult[] = [];
   const entityIds = new Set<string>();
   let skipped = 0;
@@ -383,6 +438,7 @@ export async function repairLifecycleBatch(
 }> {
   const limit = input.limit ?? 40;
   const afterId = input.afterId ?? null;
+  await ensureUnknownValidityConstraint(db);
   const days = await getExpiringSoonDays(db);
   const rows = await db.query<{ entity_id: string }>(
     `select distinct l.entity_id
@@ -713,6 +769,7 @@ export async function sanitizeEvidenceBatch(
      limit $2`,
     [PARSER_SANITIZE, limit],
   );
+  await ensureUnknownValidityConstraint(db);
   const results: RepairEvidenceResult[] = [];
   const entityIds = new Set<string>();
   let skipped = 0;

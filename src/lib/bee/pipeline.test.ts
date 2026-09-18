@@ -14,7 +14,7 @@ import { setSetting } from "./settings.server.ts";
 import { applyPasswordChange } from "./admin-password.server.ts";
 import { hashPassword, verifyPassword } from "./passwords.ts";
 import { applyLifecycleForEntity } from "./publication.server.ts";
-import { repairOneEvidence } from "./repair.server.ts";
+import { repairOneEvidence, ensureUnknownValidityConstraint } from "./repair.server.ts";
 
 delete process.env.XAI_API_KEY;
 
@@ -455,5 +455,56 @@ describe("repair of existing published evidence", () => {
     ))[0];
     assert.equal(entityReg?.registration_number, "1951/000009/06");
     assert.notEqual(mismatched.evidenceId, newer.evidenceId);
+  });
+
+  it("stores unknown_validity when a published certificate has no expiry", async () => {
+    const { db } = await memoryDb();
+    const actor = "adm_test";
+    const entity = await createEntity(db, {
+      canonicalName: "Shoprite Holdings Limited",
+      registrationNumber: "1936/007721/06",
+      actorId: actor,
+      visibility: "public",
+    });
+    const ingested = await ingestDocument(db, {
+      bytes: new TextEncoder().encode(`
+        B-BBEE Certificate
+        Measured entity: Shoprite Holdings Limited
+        Registration: 1936/007721/06
+        B-BBEE level: Level Four Contributor
+        Verification agency: Example Verify (Pty) Ltd
+      `),
+      mimeType: "text/plain",
+      filename: "shoprite.txt",
+      evidenceType: "bee_certificate",
+      entityId: entity.id,
+      actorType: "admin",
+      actorId: actor,
+    });
+    const approved = await approveReview(db, {
+      reviewItemId: ingested.reviewItemId!,
+      revision: 1,
+      actorId: actor,
+      entityId: entity.id,
+      evidenceId: ingested.evidenceId,
+      expiringSoonDays: 90,
+    });
+    assert.equal(approved.ok, true);
+    await db.query("update evidence set expiry_date = null, issue_date = null where id = $1", [ingested.evidenceId]);
+    const schema = await ensureUnknownValidityConstraint(db);
+    assert.equal(schema.alreadyOk || schema.added, true);
+    await applyLifecycleForEntity(db, entity.id, 90);
+    const row = (
+      await db.query<{ lifecycle_state: string }>("select lifecycle_state from evidence where id = $1", [
+        ingested.evidenceId,
+      ])
+    )[0];
+    assert.equal(row?.lifecycle_state, "unknown_validity");
+    const currentNoExpiry = (
+      await db.query<{ n: number }>(
+        "select count(*)::int as n from evidence where lifecycle_state in ('current','expiring_soon') and expiry_date is null",
+      )
+    )[0];
+    assert.equal(currentNoExpiry?.n, 0);
   });
 });
