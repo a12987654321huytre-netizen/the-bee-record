@@ -311,6 +311,25 @@ describe("lifecycle classification", () => {
     assert.equal(result.currentEvidenceId, null);
   });
 
+  it("does not treat a non-certificate with no expiry as current", () => {
+    const result = classifyPublishedEvidence(
+      [
+        {
+          id: "evd_report",
+          evidence_type: "annual_report",
+          issue_date: "2025-09-01",
+          expiry_date: null,
+          discovered_at: "2025-09-02",
+          publication_state: "published",
+        },
+      ],
+      "2026-09-18",
+      90,
+    );
+    assert.equal(result.decisions[0]?.lifecycle, "unknown_validity");
+    assert.equal(result.currentEvidenceId, null);
+  });
+
   it("does not mix two legal entities", () => {
     const a = classifyPublishedEvidence(
       [

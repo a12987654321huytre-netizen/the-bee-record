@@ -89,15 +89,19 @@ export function classifyPublishedEvidence(
     ? published.filter((r) => isStatus(r.evidence_type))
     : published.filter((r) => isRecognized(r.evidence_type));
   const effectivePool = pool.length ? pool : published;
+  const competingIds = new Set(effectivePool.map((r) => r.id));
 
   for (const row of published) {
     if (isExpired(row, now)) decisions.set(row.id, "expired");
-    else if (isStatus(row.evidence_type) && !hasPresentValidity(row, now)) {
+    else if (!hasPresentValidity(row, now) && (isStatus(row.evidence_type) || competingIds.has(row.id))) {
+      // Current requires positive present validity. Missing expiry is not current,
+      // including non-certificate documents that would otherwise win by fallback.
       decisions.set(row.id, "unknown_validity");
     }
   }
 
   const livePool = effectivePool
+    .filter((r) => hasPresentValidity(r, now))
     .filter((r) => {
       const state = decisions.get(r.id);
       return state !== "expired" && state !== "unknown_validity";
@@ -139,12 +143,17 @@ export function classifyPublishedEvidence(
     currentEvidenceId = null;
   } else if (currentEvidenceId) {
     const current = published.find((r) => r.id === currentEvidenceId);
-    const life = expiryStatus(current?.expiry_date ?? null, "current", expiringSoonDays, now);
-    decisions.set(currentEvidenceId, life === "expiring_soon" ? "expiring_soon" : "current");
-    for (const row of effectivePool) {
-      if (row.id === currentEvidenceId) continue;
-      if (decisions.get(row.id) === "expired") continue;
-      decisions.set(row.id, "superseded");
+    if (!current || !hasPresentValidity(current, now)) {
+      if (current) decisions.set(current.id, "unknown_validity");
+      currentEvidenceId = null;
+    } else {
+      const life = expiryStatus(current.expiry_date, "current", expiringSoonDays, now);
+      decisions.set(currentEvidenceId, life === "expiring_soon" ? "expiring_soon" : "current");
+      for (const row of effectivePool) {
+        if (row.id === currentEvidenceId) continue;
+        if (decisions.get(row.id) === "expired") continue;
+        decisions.set(row.id, "superseded");
+      }
     }
   }
 

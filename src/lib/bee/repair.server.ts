@@ -509,6 +509,21 @@ export async function repairCorpusStats(db: Sql) {
     currentWithoutExpiry: await q(
       "select count(*)::int as n from evidence where lifecycle_state in ('current','expiring_soon') and expiry_date is null",
     ),
+    currentWithoutExpiryItems: await db.query<{
+      id: string;
+      title: string | null;
+      evidence_type: string;
+      lifecycle_state: string;
+      canonical_name: string | null;
+    }>(
+      `select e.id, e.title, e.evidence_type, e.lifecycle_state, n.canonical_name
+       from evidence e
+       left join evidence_entity_links l on l.evidence_id = e.id
+       left join entities n on n.id = l.entity_id and n.merged_into_id is null
+       where e.lifecycle_state in ('current','expiring_soon') and e.expiry_date is null
+       order by e.id
+       limit 20`,
+    ),
     fieldOverrides: await q("select count(*)::int as n from field_overrides where locked = 1"),
   };
 }
