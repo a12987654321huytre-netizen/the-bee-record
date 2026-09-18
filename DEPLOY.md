@@ -112,7 +112,7 @@ work**.
 | Background crawl | In-request `runSourceCheck` (idempotent) | **Queues** / **Workflows** for crawl → fetch → extract |
 | AI | `XAI_API_KEY` (xAI `grok-4.5`) | Same secret in Worker secrets; or Workers AI behind the existing extractor abstraction |
 | Admin auth | scrypt hashes + HttpOnly cookie `bee_admin` | Same application auth. **No** default password. Store hashes only. |
-| Secrets | Vercel/Neon env | Use D1 binding + `wrangler secret put XAI_API_KEY` + `wrangler secret put CRON_SECRET` |
+| Secrets | Vercel/Neon env | `wrangler secret put DATABASE_URL` is wrong (D1 is a binding). Use D1 binding + `wrangler secret put XAI_API_KEY` + `wrangler secret put CRON_SECRET` |
 
 ### If you still attach Cloudflare to this GitHub repo
 
