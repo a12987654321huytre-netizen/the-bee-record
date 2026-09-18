@@ -11,7 +11,9 @@ import {
   repairCorpusStats,
   repairEvidenceBatch,
   repairLifecycleBatch,
+  resetEqualDateRepairRuns,
   resetRepairRuns,
+  cleanupGarbageAgencies,
 } from "@/lib/bee/repair.server";
 import { sql } from "@/lib/bee/sql.server";
 
@@ -49,7 +51,7 @@ const bodySchema = z.object({
   crawlLimit: z.number().int().min(1).max(8).optional(),
   retryLimit: z.number().int().min(1).max(12).optional(),
   repairLimit: z.number().int().min(1).max(12).optional(),
-  phase: z.enum(["extract", "lifecycle", "reset"]).optional(),
+  phase: z.enum(["extract", "lifecycle", "reset", "cleanup"]).optional(),
   afterId: z.string().nullable().optional(),
   sourceId: z.string().optional(),
 });
@@ -86,6 +88,17 @@ export const Route = createFileRoute("/api/corpus-import")({
           if (phase === "reset") {
             const out = await resetRepairRuns(db);
             return Response.json({ ...(await stats(db)), phase, ...out });
+          }
+          if (phase === "cleanup") {
+            const garbageAgencies = await cleanupGarbageAgencies(db);
+            const equalDates = await resetEqualDateRepairRuns(db);
+            return Response.json({
+              ...(await stats(db)),
+              phase,
+              garbageAgencies,
+              equalDateEvidence: equalDates.evidence,
+              equalDateRuns: equalDates.runs,
+            });
           }
           if (phase === "lifecycle") {
             const out = await repairLifecycleBatch(db, {

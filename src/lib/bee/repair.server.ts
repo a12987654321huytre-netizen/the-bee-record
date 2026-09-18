@@ -82,7 +82,8 @@ async function applyEvidenceMetadata(
 ) {
   const map = new Map(claims.map((c) => [c.field_key, workingValue(c)]));
   const issue = map.get("issue_date") ?? null;
-  const expiry = map.get("expiry_date") ?? null;
+  const expiryRaw = map.get("expiry_date") ?? null;
+  const expiry = issue && expiryRaw && issue === expiryRaw ? null : expiryRaw;
   const docType = map.get("document_type") ?? map.get("certificate_type") ?? null;
   const issuer = map.get("verification_agency") ?? null;
   let typeUpdate: string | null = null;
@@ -484,6 +485,38 @@ export async function cleanupGarbageAgencies(db: Sql): Promise<number> {
     removed += 1;
   }
   return removed;
+}
+
+export async function resetEqualDateRepairRuns(db: Sql): Promise<{ evidence: number; runs: number }> {
+  const rows = await db.query<{ id: string }>(
+    `select id from evidence
+     where issue_date is not null and expiry_date is not null
+       and issue_date::date = expiry_date::date`,
+  );
+  const ids = rows.map((r) => r.id);
+  if (!ids.length) return { evidence: 0, runs: 0 };
+  await db.query(
+    `update published_claims set claim_id = null
+     where claim_id in (
+       select c.id from extracted_claims c
+       join extraction_runs r on r.id = c.extraction_run_id
+       where r.parser = $1 and r.evidence_id = any($2)
+     )`,
+    [PARSER_REPAIR, ids],
+  );
+  const runs = await db.query<{ n: number }>(
+    `select count(*)::int as n from extraction_runs where parser = $1 and evidence_id = any($2)`,
+    [PARSER_REPAIR, ids],
+  );
+  await db.query(
+    `delete from extracted_claims
+     where extraction_run_id in (
+       select id from extraction_runs where parser = $1 and evidence_id = any($2)
+     )`,
+    [PARSER_REPAIR, ids],
+  );
+  await db.query(`delete from extraction_runs where parser = $1 and evidence_id = any($2)`, [PARSER_REPAIR, ids]);
+  return { evidence: ids.length, runs: runs[0]?.n ?? 0 };
 }
 
 export { classifyPublishedEvidence };

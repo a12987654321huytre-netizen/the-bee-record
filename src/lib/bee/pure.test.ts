@@ -181,6 +181,31 @@ describe("deterministic extractor", () => {
     const result = extractDeterministically("B-BBEE Certificate\nLEVEL ONE CONTRIBUTOR\nMeasured entity: Shoprite Holdings Limited");
     assert.equal(result.claims.find((c) => c.field === "bee_level")?.normalized_value, "1");
   });
+
+  it("pairs issue and expiry when a measurement-period date sits in the same window", () => {
+    const result = extractDeterministically(`
+      EmpowerLogic (Pty) Ltd
+      BBBEE Rating Agency
+      Measured Entity:
+      Clicks Group Limited and Subsidiaries
+      Registration Number
+      1996/000645/06
+      Certificate Number
+      ELC14263RGENBB
+      31/08/2025
+      06/11/2026
+      Issue Date
+      Expiry Date
+      07/11/2025
+      B-BBEE Status Level Level 3
+      B-BBEE Certificate
+    `);
+    const fields = Object.fromEntries(result.claims.map((c) => [c.field, c.normalized_value]));
+    assert.equal(fields.issue_date, "2025-11-07");
+    assert.equal(fields.expiry_date, "2026-11-06");
+    assert.equal(fields.bee_level, "3");
+    assert.notEqual(fields.expiry_date, fields.issue_date);
+  });
 });
 
 describe("lifecycle classification", () => {
@@ -370,6 +395,49 @@ describe("repair claim merge", () => {
     });
     assert.equal(out.conflicts.some((c) => c.field === "registration_number"), true);
     assert.equal(out.claims[0]?.published_state, "unpublished");
+  });
+
+  it("replaces a same-day expiry with a distinct extracted expiry", () => {
+    const out = mergeRepairClaims({
+      previous: [
+        {
+          field_key: "issue_date",
+          raw_value: "07/11/2025",
+          normalized_value: "2025-11-07",
+          edited_value: null,
+          confidence: 0.8,
+          source_snippet: "07/11/2025",
+          parser: "repair/v1",
+          section: null,
+          edited_by: null,
+          edited_at: null,
+          published_state: "published",
+          review_state: "approved",
+        },
+        {
+          field_key: "expiry_date",
+          raw_value: "07/11/2025",
+          normalized_value: "2025-11-07",
+          edited_value: null,
+          confidence: 0.8,
+          source_snippet: "07/11/2025",
+          parser: "repair/v1",
+          section: null,
+          edited_by: null,
+          edited_at: null,
+          published_state: "published",
+          review_state: "approved",
+        },
+      ],
+      extracted: [
+        { field: "issue_date", raw_value: "07/11/2025", normalized_value: "2025-11-07", confidence: 0.86, page: null, locator: "07/11/2025", warning: null },
+        { field: "expiry_date", raw_value: "06/11/2026", normalized_value: "2026-11-06", confidence: 0.86, page: null, locator: "06/11/2026", warning: null },
+      ],
+      lockedFields: new Set(),
+      evidencePublished: true,
+    });
+    const expiry = out.claims.find((c) => c.field_key === "expiry_date");
+    assert.equal(expiry?.normalized_value, "2026-11-06");
   });
 });
 

@@ -272,6 +272,32 @@ export function mergeRepairClaims(input: {
     const prevVal = prev ? working(prev) : null;
     const incomingVal = incoming ? incoming.normalized_value ?? incoming.raw_value : null;
 
+    if (field === "expiry_date" && prevVal && incomingVal && prevVal !== incomingVal) {
+      const issueIncoming = extractedByField.get("issue_date");
+      const issuePrev = prevByField.get("issue_date");
+      const issueVal =
+        (issueIncoming ? issueIncoming.normalized_value ?? issueIncoming.raw_value : null) ||
+        (issuePrev ? working(issuePrev) : null);
+      if (issueVal && prevVal === issueVal && incomingVal !== issueVal) {
+        claims.push({
+          field_key: field,
+          raw_value: incoming!.raw_value,
+          normalized_value: incoming!.normalized_value,
+          confidence: incoming!.confidence,
+          source_snippet: incoming!.locator,
+          parser: "repair/v1",
+          section: incoming!.warning ?? "Replaced same-day expiry with a distinct extracted expiry date.",
+          edited_value: null,
+          edited_by: null,
+          edited_at: null,
+          published_state: input.evidencePublished ? "published" : "unpublished",
+          review_state: input.evidencePublished ? "approved" : "pending",
+          page_number: incoming!.page,
+        });
+        continue;
+      }
+    }
+
     if (field === "registration_number" && input.entityReg) {
       if (incomingVal && incomingVal === input.entityReg) {
         claims.push({

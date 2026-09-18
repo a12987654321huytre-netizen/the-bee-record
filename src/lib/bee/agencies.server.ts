@@ -9,8 +9,13 @@ const REJECT_NAMES =
 export function canonicalAgencyName(raw: string): string | null {
   const trimmed = raw.replace(/\s+/g, " ").trim();
   if (trimmed.length < 3 || trimmed.length > 120) return null;
-  if (REJECT_NAMES.test(normalizeName(trimmed))) return null;
+  const normalized = normalizeName(trimmed);
+  if (REJECT_NAMES.test(normalized)) return null;
+  if (/^per [a-z]/.test(normalized)) return null;
   if (/measured entity|technical signatory|management of|gazette|scorecard|procurement recognition/i.test(trimmed)) {
+    return null;
+  }
+  if (/incorporates following|b bbee certificate|verification certificate/i.test(normalized) && !/pty|ltd|ratings|agency|verification services/i.test(normalized)) {
     return null;
   }
   for (const known of KNOWN_AGENCIES) {

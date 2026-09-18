@@ -146,11 +146,17 @@ function pairedIssueExpiry(dates: LocatedDate[], text: string): { issue: Located
   if (nearby.length < 2) return null;
   const unique = [...new Map(nearby.map((d) => [d.iso, d])).values()].sort((a, b) => (a.iso! < b.iso! ? -1 : 1));
   if (unique.length < 2) return null;
-  const earlier = unique[0]!;
-  const later = unique[unique.length - 1]!;
-  const gap = daysBetween(earlier.iso!, later.iso!);
-  if (gap == null || gap < 300 || gap > 400) return null;
-  return { issue: earlier, expiry: later };
+  for (let i = 0; i < unique.length; i += 1) {
+    for (let j = i + 1; j < unique.length; j += 1) {
+      const earlier = unique[i]!;
+      const later = unique[j]!;
+      const gap = daysBetween(earlier.iso!, later.iso!);
+      if (gap != null && gap >= 300 && gap <= 400) {
+        return { issue: earlier, expiry: later };
+      }
+    }
+  }
+  return null;
 }
 
 function deriveExpiryFromValidity(text: string, issueIso: string): { iso: string; raw: string; warning: string } | null {
@@ -332,6 +338,10 @@ export function extractDeterministically(text: string): ExtractionResult {
     warnings.push("Issue and expiry dates were swapped because the labelled expiry was earlier than the issue date.");
   }
 
+  if (issue?.iso && expiry?.iso && issue.iso === expiry.iso) {
+    expiry = null;
+  }
+
   if (issue?.iso) {
     if (issue.warning && /Ambiguous|Interpreted/.test(issue.warning)) ambiguity.push(issue.warning);
     claims.push(claim("issue_date", issue.raw, issue.iso, issue.raw, issue.warning, issue.warning ? 0.62 : 0.86));
@@ -372,7 +382,9 @@ export function extractDeterministically(text: string): ExtractionResult {
     claims.push(claim("signatory", name, normalizeName(name), sig[0], null, 0.6));
   }
 
-  const measured = text.match(/(?:measured\s+entity|name\s+of\s+measured\s+entity|enterprise\s+name|company\s+name)[:\s]+([^\n]{3,120})/i);
+  const measured = text.match(
+    /(?:name\s+of\s+measured\s+entity|measured\s+entity|enterprise\s+name|company\s+name)\s*:\s*([^\n]{3,120})/i,
+  );
   if (measured) {
     const name = measured[1]!.replace(/\s+/g, " ").trim();
     if (!/registration|level|scorecard/i.test(name)) {
@@ -385,7 +397,10 @@ export function extractDeterministically(text: string): ExtractionResult {
     /(?:certificate\s+(?:number|no\.?|ref(?:erence)?)|unique\s+ref(?:erence)?\s+no\.?|verification\s+number)[:\s]+([A-Za-z0-9][A-Za-z0-9[/_\-.]{4,40})/i,
   );
   if (certNo) {
-    claims.push(claim("certificate_number", certNo[1]!.trim(), certNo[1]!.trim(), certNo[0], null, 0.7));
+    const raw = certNo[1]!.trim();
+    if (/\d/.test(raw) && !/^(version|final|draft)$/i.test(raw)) {
+      claims.push(claim("certificate_number", raw, raw, certNo[0], null, 0.7));
+    }
   }
 
   if (/sworn affidavit/i.test(text)) {
