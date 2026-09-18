@@ -1,0 +1,69 @@
+# Secrets — never commit
+.env
+.env.*
+.env.local
+.env.development
+.env.production
+.env.test
+!.env.example
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build / caches
+.vercel/
+.output/
+.nitro/
+.tanstack/
+.cache/
+dist/
+build/
+*.tsbuildinfo
+.vite/
+
+# Local / embedded databases
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+pglite-data/
+.data/
+.pglite/
+
+# Logs and temp
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+tmp/
+temp/
+.tmp/
+*.pid
+*.seed
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Sandbox / local-only
+.project_id
+.node_modules.lock
+artifacts/
+screenshots/
+attachments/
+.grok/**
+!.grok/app-env.json
+AGENTS.md
+startup.sh
+
+# Coverage
+coverage/
+.nyc_output/
