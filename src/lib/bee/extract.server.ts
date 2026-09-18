@@ -42,36 +42,46 @@ export async function runAiExtraction(text: string): Promise<
   const apiKey = process.env.XAI_API_KEY?.trim();
   if (!apiKey) return { ok: false, error: "AI extraction is not configured.", raw: null };
   const excerpt = text.slice(0, 24_000);
-  const res = await fetch("https://api.x.ai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: "grok-4.5",
-      temperature: 0,
-      max_tokens: 1800,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: `Extract structured claims from this evidence. Document text follows.\n\n<<<DOCUMENT\n${excerpt}\nDOCUMENT>>>`,
-        },
-      ],
-    }),
-  });
-  if (!res.ok) {
-    return { ok: false, error: `xAI API error ${res.status}`, raw: await res.text().catch(() => null) };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 18_000);
+  try {
+    const res = await fetch("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: "grok-4.5",
+        temperature: 0,
+        max_tokens: 1800,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: `Extract structured claims from this evidence. Document text follows.\n\n<<<DOCUMENT\n${excerpt}\nDOCUMENT>>>`,
+          },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      return { ok: false, error: `xAI API error ${res.status}`, raw: await res.text().catch(() => null) };
+    }
+    const body = (await res.json()) as {
+      choices?: { message?: { content?: string } }[];
+      usage?: { total_tokens?: number };
+    };
+    const raw = body.choices?.[0]?.message?.content ?? "";
+    const parsed = parseExtractionText(raw);
+    if (!parsed.ok) return { ok: false, error: parsed.error, raw };
+    return { ok: true, data: parsed.data, raw, model: "grok-4.5", tokens: body.usage?.total_tokens ?? null };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: message.includes("abort") ? "AI extraction timed out." : message, raw: null };
+  } finally {
+    clearTimeout(timer);
   }
-  const body = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
-    usage?: { total_tokens?: number };
-  };
-  const raw = body.choices?.[0]?.message?.content ?? "";
-  const parsed = parseExtractionText(raw);
-  if (!parsed.ok) return { ok: false, error: parsed.error, raw };
-  return { ok: true, data: parsed.data, raw, model: "grok-4.5", tokens: body.usage?.total_tokens ?? null };
 }
 
 export async function persistExtraction(

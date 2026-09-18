@@ -67,3 +67,7 @@ startup.sh
 # Coverage
 coverage/
 .nyc_output/
+
+# One-time production import token — never commit
+.corpus-import-token
+.corpus-import-token.sha256

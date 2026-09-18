@@ -24,6 +24,7 @@ import { Route as AdminLoginRouteImport } from './routes/admin/login'
 import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
 import { Route as AdminSubmissionsRouteImport } from './routes/admin/submissions'
 import { Route as AdminVerifiersRouteImport } from './routes/admin/verifiers'
+import { Route as ApiCorpusImportRouteImport } from './routes/api/corpus-import'
 import { Route as ApiCronRouteImport } from './routes/api/cron'
 import { Route as CompaniesIndexRouteImport } from './routes/companies/index'
 import { Route as CompaniesSlugRouteImport } from './routes/companies/$slug'
@@ -118,6 +119,11 @@ const AdminVerifiersRoute = AdminVerifiersRouteImport.update({
   id: '/verifiers',
   path: '/verifiers',
   getParentRoute: () => AdminRouteRoute,
+} as any)
+const ApiCorpusImportRoute = ApiCorpusImportRouteImport.update({
+  id: '/api/corpus-import',
+  path: '/api/corpus-import',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ApiCronRoute = ApiCronRouteImport.update({
   id: '/api/cron',
@@ -230,6 +236,7 @@ export interface FileRoutesByFullPath {
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/submissions': typeof AdminSubmissionsRoute
   '/admin/verifiers': typeof AdminVerifiersRoute
+  '/api/corpus-import': typeof ApiCorpusImportRoute
   '/api/cron': typeof ApiCronRoute
   '/companies/$slug': typeof CompaniesSlugRoute
   '/evidence/$id': typeof EvidenceIdRoute
@@ -265,6 +272,7 @@ export interface FileRoutesByTo {
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/submissions': typeof AdminSubmissionsRoute
   '/admin/verifiers': typeof AdminVerifiersRoute
+  '/api/corpus-import': typeof ApiCorpusImportRoute
   '/api/cron': typeof ApiCronRoute
   '/companies/$slug': typeof CompaniesSlugRoute
   '/evidence/$id': typeof EvidenceIdRoute
@@ -302,6 +310,7 @@ export interface FileRoutesById {
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/submissions': typeof AdminSubmissionsRoute
   '/admin/verifiers': typeof AdminVerifiersRoute
+  '/api/corpus-import': typeof ApiCorpusImportRoute
   '/api/cron': typeof ApiCronRoute
   '/companies/$slug': typeof CompaniesSlugRoute
   '/evidence/$id': typeof EvidenceIdRoute
@@ -340,6 +349,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/admin/submissions'
     | '/admin/verifiers'
+    | '/api/corpus-import'
     | '/api/cron'
     | '/companies/$slug'
     | '/evidence/$id'
@@ -375,6 +385,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/admin/submissions'
     | '/admin/verifiers'
+    | '/api/corpus-import'
     | '/api/cron'
     | '/companies/$slug'
     | '/evidence/$id'
@@ -411,6 +422,7 @@ export interface FileRouteTypes {
     | '/admin/settings'
     | '/admin/submissions'
     | '/admin/verifiers'
+    | '/api/corpus-import'
     | '/api/cron'
     | '/companies/$slug'
     | '/evidence/$id'
@@ -442,6 +454,7 @@ export interface RootRouteChildren {
   SourcesRoute: typeof SourcesRoute
   SubmitRoute: typeof SubmitRoute
   UpdatesRoute: typeof UpdatesRoute
+  ApiCorpusImportRoute: typeof ApiCorpusImportRoute
   ApiCronRoute: typeof ApiCronRoute
   CompaniesSlugRoute: typeof CompaniesSlugRoute
   EvidenceIdRoute: typeof EvidenceIdRoute
@@ -559,6 +572,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/verifiers'
       preLoaderRoute: typeof AdminVerifiersRouteImport
       parentRoute: typeof AdminRouteRoute
+    }
+    '/api/corpus-import': {
+      id: '/api/corpus-import'
+      path: '/api/corpus-import'
+      fullPath: '/api/corpus-import'
+      preLoaderRoute: typeof ApiCorpusImportRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/cron': {
       id: '/api/cron'
@@ -749,6 +769,7 @@ const rootRouteChildren: RootRouteChildren = {
   SourcesRoute: SourcesRoute,
   SubmitRoute: SubmitRoute,
   UpdatesRoute: UpdatesRoute,
+  ApiCorpusImportRoute: ApiCorpusImportRoute,
   ApiCronRoute: ApiCronRoute,
   CompaniesSlugRoute: CompaniesSlugRoute,
   EvidenceIdRoute: EvidenceIdRoute,
