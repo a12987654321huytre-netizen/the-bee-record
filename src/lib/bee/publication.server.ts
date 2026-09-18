@@ -1,8 +1,10 @@
 import { audit } from "./audit.server.ts";
 import { workingClaims, workingValue } from "./claims.server.ts";
 import { RECOGNIZED_DOCUMENT_TYPES } from "./constants.ts";
-import { compareIso, expiryStatus, todayIso } from "./dates.ts";
+import { compareIso, expiryStatus, todayIso, toIsoDate } from "./dates.ts";
 import { newId } from "./ids.ts";
+import { classifyPublishedEvidence, type LifecycleEvidence } from "./lifecycle.ts";
+import { normalizeRegistration } from "./normalize.ts";
 import type { Sql } from "./db-types.ts";
 import type { CurrentState, ExtractedClaim } from "./types.ts";
 
@@ -38,19 +40,43 @@ function presentFields(claims: ExtractedClaim[]): Map<string, string> {
   return map;
 }
 
-export async function rebuildCurrentState(db: Sql, entityId: string, expiringSoonDays: number) {
-  const claims = await db.query<{
-    field_key: string;
-    value: string | null;
-    evidence_id: string;
-    published_at: string;
-  }>("select field_key, value, evidence_id, published_at from published_claims where entity_id = $1", [entityId]);
-  const map = new Map(claims.map((c) => [c.field_key, c]));
-  const supporting = map.get("bee_level") ?? map.get("issue_date") ?? claims[0];
-  const expiry = map.get("expiry_date")?.value ?? null;
-  const lifecycle = supporting
-    ? expiryStatus(expiry, "current", expiringSoonDays, todayIso())
-    : null;
+async function beeLevelsFor(db: Sql, evidenceIds: string[]): Promise<Map<string, string | null>> {
+  const map = new Map<string, string | null>();
+  if (!evidenceIds.length) return map;
+  for (const id of evidenceIds) {
+    const rows = await db.query<{ value: string | null }>(
+      `select coalesce(c.edited_value, c.normalized_value, c.raw_value) as value
+       from extracted_claims c
+       join extraction_runs r on r.id = c.extraction_run_id
+       where c.evidence_id = $1 and c.field_key = 'bee_level' and r.success = 1
+       order by r.started_at desc
+       limit 1`,
+      [id],
+    );
+    map.set(id, rows[0]?.value ?? null);
+  }
+  return map;
+}
+
+async function writeCurrentState(
+  db: Sql,
+  entityId: string,
+  input: {
+    fields: Map<string, string>;
+    evidenceId: string | null;
+    lifecycle: string | null;
+    publishedAt: string | null;
+    verifierAgencyId: string | null;
+    signatoryId: string | null;
+    expiringSoonDays: number;
+  },
+) {
+  const expiry = input.fields.get("expiry_date") ?? null;
+  const lifecycle = input.lifecycle
+    ? input.lifecycle
+    : input.evidenceId
+      ? expiryStatus(expiry, "current", input.expiringSoonDays, todayIso())
+      : null;
   await db.query(
     `insert into entity_current_state (
         entity_id, bee_level, recognition_level, scorecard_type, certificate_type,
@@ -73,31 +99,173 @@ export async function rebuildCurrentState(db: Sql, entityId: string, expiringSoo
         updated_at = now()`,
     [
       entityId,
-      map.get("bee_level")?.value ?? null,
-      map.get("recognition_level")?.value ?? null,
-      map.get("scorecard_type")?.value ?? null,
-      map.get("certificate_type")?.value ?? null,
-      map.get("issue_date")?.value ?? null,
+      input.fields.get("bee_level") ?? null,
+      input.fields.get("recognition_level") ?? null,
+      input.fields.get("scorecard_type") ?? null,
+      input.fields.get("certificate_type") ?? null,
+      input.fields.get("issue_date") ?? null,
       expiry,
-      null,
-      null,
-      map.get("registration_number")?.value ?? null,
-      supporting?.evidence_id ?? null,
+      input.verifierAgencyId,
+      input.signatoryId,
+      input.fields.get("registration_number") ?? null,
+      input.evidenceId,
       lifecycle,
-      supporting?.published_at ?? null,
+      input.publishedAt,
     ],
   );
+}
 
-  const evidence = await db.query<{ id: string; verifier_agency_id: string | null; signatory_id: string | null }>(
-    "select id, verifier_agency_id, signatory_id from evidence where id = $1",
-    [supporting?.evidence_id ?? ""],
+export async function applyLifecycleForEntity(
+  db: Sql,
+  entityId: string,
+  expiringSoonDays: number,
+): Promise<{ updated: number; disputed: boolean; reason: string | null; supportingEvidenceId: string | null }> {
+  const evidence = await db.query<{
+    id: string;
+    evidence_type: string;
+    issue_date: string | null;
+    expiry_date: string | null;
+    discovered_at: string;
+    publication_state: string;
+    lifecycle_state: string;
+    verifier_agency_id: string | null;
+    signatory_id: string | null;
+  }>(
+    `select e.id, e.evidence_type, e.issue_date, e.expiry_date, e.discovered_at, e.publication_state,
+            e.lifecycle_state, e.verifier_agency_id, e.signatory_id
+     from evidence e
+     join evidence_entity_links l on l.evidence_id = e.id
+     where l.entity_id = $1
+       and l.link_state in ('confirmed','extracted','candidate')
+       and e.publication_state = 'published'`,
+    [entityId],
   );
-  if (evidence[0]) {
-    await db.query(
-      "update entity_current_state set verifier_agency_id = $2, signatory_id = $3, updated_at = now() where entity_id = $1",
-      [entityId, evidence[0].verifier_agency_id, evidence[0].signatory_id],
-    );
+  const levels = await beeLevelsFor(
+    db,
+    evidence.map((e) => e.id),
+  );
+  const rows: LifecycleEvidence[] = evidence.map((e) => ({
+    id: e.id,
+    evidence_type: e.evidence_type,
+    issue_date: e.issue_date,
+    expiry_date: e.expiry_date,
+    discovered_at: e.discovered_at,
+    publication_state: e.publication_state,
+    bee_level: levels.get(e.id) ?? null,
+  }));
+  const classified = classifyPublishedEvidence(rows, todayIso(), expiringSoonDays);
+  let updated = 0;
+  for (const decision of classified.decisions) {
+    const current = evidence.find((e) => e.id === decision.evidenceId);
+    if (!current || current.lifecycle_state === decision.lifecycle) continue;
+    await db.query("update evidence set lifecycle_state = $2, updated_at = now() where id = $1", [
+      decision.evidenceId,
+      decision.lifecycle,
+    ]);
+    updated += 1;
   }
+
+  const locks = await lockedFields(db, entityId);
+  const entity = (
+    await db.query<{ registration_number: string | null; registration_number_normalized: string | null }>(
+      "select registration_number, registration_number_normalized from entities where id = $1",
+      [entityId],
+    )
+  )[0];
+
+  const supportingId = classified.currentEvidenceId ?? classified.supportingEvidenceId;
+  const fields = new Map<string, string>();
+  const existingClaims = await db.query<{ field_key: string; value: string | null; evidence_id: string; published_at: string }>(
+    "select field_key, value, evidence_id, published_at from published_claims where entity_id = $1",
+    [entityId],
+  );
+  for (const row of existingClaims) {
+    if (row.value) fields.set(row.field_key, row.value);
+  }
+
+  if (supportingId && !classified.disputed) {
+    const claims = await workingClaims(db, supportingId);
+    const incoming = presentFields(claims);
+    for (const [field, value] of incoming) {
+      if (locks.has(field)) continue;
+      if (field === "registration_number") {
+        const incomingReg = normalizeRegistration(value);
+        const entityReg = entity?.registration_number_normalized;
+        if (entityReg && incomingReg !== entityReg) continue;
+      }
+      fields.set(field, value);
+      const existing = existingClaims.find((c) => c.field_key === field);
+      const claim = claims.find((c) => c.field_key === field);
+      if (existing) {
+        await db.query(
+          `update published_claims
+           set value = $3, normalized_value = $3, evidence_id = $4, claim_id = $5, superseded_at = null
+           where entity_id = $1 and field_key = $2`,
+          [entityId, field, value, supportingId, claim?.id ?? null],
+        );
+      } else {
+        await db.query(
+          `insert into published_claims
+            (id, entity_id, field_key, value, normalized_value, evidence_id, claim_id, published_by)
+           values ($1,$2,$3,$4,$4,$5,$6,$7)`,
+          [newId("pcl"), entityId, field, value, supportingId, claim?.id ?? null, "repair:lifecycle"],
+        );
+      }
+    }
+    if (entity?.registration_number && !locks.has("registration_number")) {
+      const publishedReg = fields.get("registration_number");
+      if (publishedReg && entity.registration_number_normalized && normalizeRegistration(publishedReg) !== entity.registration_number_normalized) {
+        fields.set("registration_number", entity.registration_number);
+        await db.query(
+          `update published_claims set value = $3, normalized_value = $3
+           where entity_id = $1 and field_key = $2`,
+          [entityId, "registration_number", entity.registration_number],
+        );
+      } else if (!publishedReg) {
+        fields.set("registration_number", entity.registration_number);
+      }
+    }
+  }
+
+  for (const [field, lock] of locks) {
+    if (lock.value) fields.set(field, lock.value);
+  }
+
+  const supporting = evidence.find((e) => e.id === supportingId) ?? null;
+  const supportingLife = classified.decisions.find((d) => d.evidenceId === supportingId)?.lifecycle ?? null;
+  const entityLife = classified.disputed
+    ? "disputed"
+    : classified.currentEvidenceId
+      ? (classified.decisions.find((d) => d.evidenceId === classified.currentEvidenceId)?.lifecycle ?? "current")
+      : supportingLife === "expired" || !supportingId
+        ? "expired"
+        : supportingLife;
+
+  const publishedAt =
+    existingClaims.find((c) => c.evidence_id === supportingId)?.published_at ??
+    existingClaims[0]?.published_at ??
+    null;
+
+  await writeCurrentState(db, entityId, {
+    fields,
+    evidenceId: supportingId,
+    lifecycle: entityLife,
+    publishedAt,
+    verifierAgencyId: supporting?.verifier_agency_id ?? null,
+    signatoryId: supporting?.signatory_id ?? null,
+    expiringSoonDays,
+  });
+
+  return {
+    updated,
+    disputed: classified.disputed,
+    reason: classified.reason,
+    supportingEvidenceId: supportingId,
+  };
+}
+
+export async function rebuildCurrentState(db: Sql, entityId: string, expiringSoonDays: number) {
+  await applyLifecycleForEntity(db, entityId, expiringSoonDays);
 }
 
 export async function publishEvidence(
@@ -137,7 +305,12 @@ export async function publishEvidence(
     visibility: string;
     merged_into_id: string | null;
     automation_state: string;
-  }>("select id, visibility, merged_into_id, automation_state from entities where id = $1", [input.entityId]);
+    registration_number: string | null;
+    registration_number_normalized: string | null;
+  }>(
+    "select id, visibility, merged_into_id, automation_state, registration_number, registration_number_normalized from entities where id = $1",
+    [input.entityId],
+  );
   const entity = entities[0];
   if (!entity) return { ok: false, error: "Entity not found." };
   if (entity.merged_into_id) return { ok: false, error: "This entity was merged. Publish against the surviving record." };
@@ -159,13 +332,19 @@ export async function publishEvidence(
 
   const claims = await workingClaims(db, input.evidenceId);
   const fields = presentFields(claims);
-  const issueDate = fields.get("issue_date") ?? evidence.issue_date;
-  const expiryDate = fields.get("expiry_date") ?? evidence.expiry_date;
+  const issueDate = toIsoDate(fields.get("issue_date") ?? evidence.issue_date);
+  const expiryDate = toIsoDate(fields.get("expiry_date") ?? evidence.expiry_date);
   const locks = await lockedFields(db, input.entityId);
   const skippedLocked: string[] = [];
 
   const previous = await getCurrentState(db, input.entityId);
   const previousEvidenceId = previous?.evidence_id ?? null;
+
+  if (fields.get("registration_number") && entity.registration_number_normalized) {
+    if (normalizeRegistration(fields.get("registration_number")!) !== entity.registration_number_normalized) {
+      fields.delete("registration_number");
+    }
+  }
 
   for (const [field, incoming] of fields) {
     const lock = locks.get(field);

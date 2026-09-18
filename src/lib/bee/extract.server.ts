@@ -13,7 +13,7 @@ Return ONLY JSON matching this schema:
 {
   "claims": [
     {
-      "field": "bee_level" | "recognition_level" | "scorecard_type" | "certificate_type" | "measured_entity" | "legal_entity_name" | "trading_name" | "registration_number" | "issue_date" | "expiry_date" | "verification_agency" | "signatory" | "document_type",
+      "field": "bee_level" | "recognition_level" | "scorecard_type" | "certificate_type" | "measured_entity" | "legal_entity_name" | "trading_name" | "registration_number" | "issue_date" | "expiry_date" | "verification_agency" | "signatory" | "document_type" | "certificate_number",
       "raw_value": string,
       "normalized_value": string | null,
       "confidence": number,
@@ -28,8 +28,12 @@ Return ONLY JSON matching this schema:
 Rules:
 - Do not guess. If a field is not present, omit it.
 - normalized_value for bee_level must be "1"-"8" or "non-compliant".
-- Dates as YYYY-MM-DD only when unambiguous. Otherwise leave normalized_value null and set warning.
-- Never invent registration numbers, agencies, or levels.`;
+- Dates as YYYY-MM-DD only when unambiguous. South African certificates use DD/MM/YYYY when labeled Expiry Date / Issue Date / Valid Until. Unlabeled slash dates that could be either DMY or MDY stay unknown with a warning.
+- Never invent registration numbers, agencies, levels, or SANAS accreditation.
+- The first registration number in a PDF is often the verification agency's number. Prefer the number labeled for the measured entity.
+- verification_agency is the rating/verification agency that issued the certificate, not SANAS.
+- certificate_number is the certificate or unique reference number when printed.
+- If the document says it is valid for 12 months from date of issue and an issue date is present, expiry may be derived and the warning must say it was derived.`;
 
 export function aiConfigured(): boolean {
   return Boolean(process.env.XAI_API_KEY?.trim());
@@ -121,8 +125,8 @@ export async function persistExtraction(
       const normalized = applyManualNormalization(claim.field, claim.normalized_value ?? claim.raw_value);
       await db.query(
         `insert into extracted_claims
-          (id, evidence_id, extraction_run_id, field_key, structured_value, normalized_value, raw_value, confidence, page_number, source_snippet, parser)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          (id, evidence_id, extraction_run_id, field_key, structured_value, normalized_value, raw_value, confidence, page_number, source_snippet, parser, section, validation_status)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
         [
           newId("clm"),
           input.evidenceId,
@@ -135,6 +139,8 @@ export async function persistExtraction(
           claim.page,
           claim.locator,
           input.parser,
+          claim.warning,
+          claim.warning ? "warning" : "unchecked",
         ],
       );
     }

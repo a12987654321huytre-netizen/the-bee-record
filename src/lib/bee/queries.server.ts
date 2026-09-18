@@ -286,7 +286,7 @@ export async function getPublicEvidence(db: Sql, id: string) {
      where l.evidence_id = $1 and l.link_state in ('confirmed','extracted') and e.visibility = 'public'`,
     [id],
   );
-  const claims = (await workingClaims(db, id)).filter((c) => c.published_state === "published" || c.review_state === "approved" || c.review_state === "edited");
+  const claims = await workingClaims(db, id);
   const agency = evidence.verifier_agency_id
     ? (
         await db.query<{ id: string; slug: string; name: string; website: string | null }>(

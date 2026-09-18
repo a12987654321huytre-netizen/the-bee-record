@@ -1,6 +1,8 @@
+import { ensureAgency, ensureSignatory } from "./agencies.server.ts";
 import { audit } from "./audit.server.ts";
 import { workingClaims, workingValue } from "./claims.server.ts";
 import { RECOGNIZED_DOCUMENT_TYPES } from "./constants.ts";
+import { extractBva } from "./deterministic-extract.ts";
 import { extractEvidence } from "./extract.server.ts";
 import { safeFetch } from "./fetch.server.ts";
 import { newId } from "./ids.ts";
@@ -58,7 +60,7 @@ async function confirmLink(
   return id;
 }
 
-async function applyClaimMetadata(db: Sql, evidenceId: string, claims: ExtractedClaim[]) {
+export async function applyClaimMetadata(db: Sql, evidenceId: string, claims: ExtractedClaim[]) {
   const map = new Map(claims.map((c) => [c.field_key, workingValue(c)]));
   const issue = map.get("issue_date") ?? null;
   const expiry = map.get("expiry_date") ?? null;
@@ -88,20 +90,6 @@ async function applyClaimMetadata(db: Sql, evidenceId: string, claims: Extracted
   );
 }
 
-async function resolveAgency(db: Sql, name: string | null): Promise<string | null> {
-  if (!name) return null;
-  const { normalizeName } = await import("./normalize.ts");
-  const n = normalizeName(name);
-  const rows = await db.query<{ id: string }>(
-    `select id from verification_agencies where normalized_name = $1
-     union
-     select agency_id as id from agency_aliases where normalized_alias = $1
-     limit 1`,
-    [n],
-  );
-  return rows[0]?.id ?? null;
-}
-
 export async function processEvidence(
   db: Sql,
   input: {
@@ -125,12 +113,28 @@ export async function processEvidence(
     claims.find((c) => c.field_key === "legal_entity_name") ?? claims.find((c) => c.field_key === "measured_entity");
   const regClaim = claims.find((c) => c.field_key === "registration_number");
   const agencyClaim = claims.find((c) => c.field_key === "verification_agency");
-  const agencyId = await resolveAgency(db, workingValue(agencyClaim));
-  if (agencyId) {
-    await db.query("update evidence set verifier_agency_id = $2, updated_at = now() where id = $1", [
-      input.evidenceId,
-      agencyId,
-    ]);
+  const agencyId = await ensureAgency(db, {
+    name: workingValue(agencyClaim),
+    bva: extractBva(input.text),
+    evidenceId: input.evidenceId,
+  });
+  const signatoryClaim = claims.find((c) => c.field_key === "signatory");
+  const signatoryId = await ensureSignatory(db, {
+    name: workingValue(signatoryClaim),
+    agencyId,
+    title: /technical\s+signatory/i.test(signatoryClaim?.source_snippet ?? signatoryClaim?.raw_value ?? "")
+      ? "Technical Signatory"
+      : null,
+  });
+  if (agencyId || signatoryId) {
+    await db.query(
+      `update evidence set
+          verifier_agency_id = coalesce($2, verifier_agency_id),
+          signatory_id = coalesce($3, signatory_id),
+          updated_at = now()
+       where id = $1`,
+      [input.evidenceId, agencyId, signatoryId],
+    );
   }
 
   const match = await matchEntity(db, {
@@ -211,10 +215,12 @@ export async function processEvidence(
     return { reviewItemId, autoPublished: false, extractionFailed: true, warnings };
   }
 
-  if (match.conflict === "registration_number_conflict") {
+  if (match.conflict === "registration_number_conflict" || flags.some((f) => f.code === "registration_mismatch")) {
     const reviewItemId = await ensureReviewItem(db, {
       type: "registration_number_conflict",
-      reason: match.reason,
+      reason: match.conflict === "registration_number_conflict"
+        ? match.reason
+        : (flags.find((f) => f.code === "registration_mismatch")?.message ?? "Extracted registration number does not match the linked entity."),
       severity: "critical",
       entityId,
       evidenceId: input.evidenceId,

@@ -1,5 +1,5 @@
 const ISO = /^(\d{4})-(\d{2})-(\d{2})$/;
-const DMY_SLASH = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/;
+const DMY_SLASH = /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/;
 const MONTHS: Record<string, string> = {
   jan: "01",
   january: "01",
@@ -34,6 +34,11 @@ export type ParsedDate = {
   warning: string | null;
 };
 
+export type ParseDateOptions = {
+  /** South African certificates use DD/MM/YYYY. Only apply when the date is labeled. */
+  assumeDmy?: boolean;
+};
+
 export function toIsoDate(value: string | Date | null | undefined): string | null {
   if (value == null || value === "") return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
@@ -54,17 +59,30 @@ export function addDaysIso(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-export function parseDate(raw: string | null | undefined): ParsedDate {
+export function addMonthsIso(iso: string, months: number): string | null {
+  const m = iso.match(ISO);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const dt = new Date(Date.UTC(y, mo - 1 + months, d));
+  if (dt.getUTCDate() !== d) {
+    dt.setUTCDate(0);
+  }
+  return dt.toISOString().slice(0, 10);
+}
+
+export function parseDate(raw: string | null | undefined, options: ParseDateOptions = {}): ParsedDate {
   if (!raw || !raw.trim()) {
     return { iso: null, raw: raw ?? "", ambiguous: false, warning: null };
   }
-  const trimmed = raw.trim();
+  const trimmed = raw.replace(/\s+/g, " ").trim();
   const isoMatch = trimmed.match(ISO);
   if (isoMatch) {
     return validateIso(trimmed, trimmed);
   }
   const long = trimmed.match(
-    /^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$|^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/,
+    /^(\d{1,2})[/\-\s]+([A-Za-z]{3,9})[/\-\s,]+(\d{4})$|^([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})$/,
   );
   if (long) {
     if (long[1] && long[2] && long[3]) {
@@ -86,6 +104,16 @@ export function parseDate(raw: string | null | undefined): ParsedDate {
     }
     if (b > 12 && a <= 12) {
       return validateIso(`${y}-${pad(String(a))}-${pad(String(b))}`, trimmed);
+    }
+    if (options.assumeDmy && a <= 12 && b <= 12) {
+      const parsed = validateIso(`${y}-${pad(String(b))}-${pad(String(a))}`, trimmed);
+      if (parsed.iso) {
+        return {
+          ...parsed,
+          warning: `Interpreted "${trimmed}" as DD/MM/YYYY (South African certificate convention).`,
+        };
+      }
+      return parsed;
     }
     return {
       iso: null,
@@ -151,6 +179,15 @@ export function compareIso(a: string | Date | null | undefined, b: string | Date
   if (!aa) return -1;
   if (!bb) return 1;
   return aa < bb ? -1 : aa > bb ? 1 : 0;
+}
+
+export function daysBetween(a: string, b: string): number | null {
+  const aa = toIsoDate(a);
+  const bb = toIsoDate(b);
+  if (!aa || !bb) return null;
+  const ms = Date.parse(`${bb}T00:00:00Z`) - Date.parse(`${aa}T00:00:00Z`);
+  if (!Number.isFinite(ms)) return null;
+  return Math.round(ms / 86_400_000);
 }
 
 export function expiryStatus(

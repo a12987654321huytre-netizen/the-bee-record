@@ -13,6 +13,8 @@ import { matchEntity } from "./match.server.ts";
 import { setSetting } from "./settings.server.ts";
 import { applyPasswordChange } from "./admin-password.server.ts";
 import { hashPassword, verifyPassword } from "./passwords.ts";
+import { applyLifecycleForEntity } from "./publication.server.ts";
+import { repairOneEvidence } from "./repair.server.ts";
 
 delete process.env.XAI_API_KEY;
 
@@ -305,5 +307,153 @@ describe("admin password change", () => {
     assert.deepEqual(sessions.map((s) => s.id), [keepSession]);
     const audits = await db.query<{ n: number }>("select count(*)::int as n from audit_logs where action = 'admin.password_changed'");
     assert.equal(audits[0]?.n, 1);
+  });
+});
+
+describe("repair of existing published evidence", () => {
+  it("creates agencies, classifies current vs historical, and does not duplicate", async () => {
+    const { db } = await memoryDb();
+    const actor = "adm_repair";
+    const entity = await createEntity(db, {
+      canonicalName: "FirstRand Limited",
+      registrationNumber: "1966/010753/06",
+      actorId: actor,
+      visibility: "draft",
+    });
+
+    const newer = await ingestDocument(db, {
+      bytes: new TextEncoder().encode(`
+        B-BBEE Certificate
+        Measured entity: FirstRand Limited
+        Registration: 1966/010753/06
+        B-BBEE Status Level of Contributor: Level One Contributor
+        Issue date: 12 January 2026
+        Expiry date: 11 January 2027
+        Verification agency: EmpowerLogic (Pty) Ltd
+        BVA018
+        Technical signatory: Jane Q
+      `),
+      mimeType: "text/plain",
+      filename: "firstrand-2025.txt",
+      evidenceType: "bee_certificate",
+      entityId: entity.id,
+      actorType: "admin",
+      actorId: actor,
+    });
+    assert.equal(newer.duplicate, false);
+    const approvedNew = await approveReview(db, {
+      reviewItemId: newer.reviewItemId!,
+      revision: 1,
+      actorId: actor,
+      entityId: entity.id,
+      evidenceId: newer.evidenceId,
+      expiringSoonDays: 90,
+    });
+    assert.equal(approvedNew.ok, true);
+
+    const older = await ingestDocument(db, {
+      bytes: new TextEncoder().encode(`
+        B-BBEE Certificate
+        Measured entity: FirstRand Limited
+        Registration: 1966/010753/06
+        B-BBEE Status Level of Contributor: Level Two Contributor
+        Issue date: 12 January 2025
+        Expiry date: 11 January 2027
+        Verification agency: EmpowerLogic (Pty) Ltd
+        BVA018
+        Technical signatory: Jane Q
+      `),
+      mimeType: "text/plain",
+      filename: "firstrand-2024.txt",
+      evidenceType: "bee_certificate",
+      entityId: entity.id,
+      actorType: "admin",
+      actorId: actor,
+    });
+    const approvedOld = await approveReview(db, {
+      reviewItemId: older.reviewItemId!,
+      revision: 1,
+      actorId: actor,
+      entityId: entity.id,
+      evidenceId: older.evidenceId,
+      expiringSoonDays: 90,
+    });
+    assert.equal(approvedOld.ok, true);
+
+    await applyLifecycleForEntity(db, entity.id, 90);
+    const newerRow = (await db.query<{ lifecycle_state: string; verifier_agency_id: string | null; expiry_date: string | null }>(
+      "select lifecycle_state, verifier_agency_id, expiry_date from evidence where id = $1",
+      [newer.evidenceId],
+    ))[0];
+    const olderRow = (await db.query<{ lifecycle_state: string }>("select lifecycle_state from evidence where id = $1", [older.evidenceId]))[0];
+    assert.ok(newerRow?.lifecycle_state === "current" || newerRow?.lifecycle_state === "expiring_soon");
+    assert.ok(olderRow?.lifecycle_state === "expired" || olderRow?.lifecycle_state === "superseded" || olderRow?.lifecycle_state === "historical");
+    assert.ok(newerRow?.verifier_agency_id);
+    assert.ok(String(newerRow?.expiry_date ?? "").startsWith("2027-01-11"));
+
+    const agencies = await db.query<{ n: number }>("select count(*)::int as n from verification_agencies");
+    assert.equal(agencies[0]?.n, 1);
+
+    const duplicate = await ingestDocument(db, {
+      bytes: new TextEncoder().encode(`
+        B-BBEE Certificate
+        Measured entity: FirstRand Limited
+        Registration: 1966/010753/06
+        B-BBEE Status Level of Contributor: Level One Contributor
+        Issue date: 12 January 2026
+        Expiry date: 11 January 2027
+        Verification agency: EmpowerLogic (Pty) Ltd
+        BVA018
+        Technical signatory: Jane Q
+      `),
+      mimeType: "text/plain",
+      filename: "firstrand-2025-again.txt",
+      evidenceType: "bee_certificate",
+      entityId: entity.id,
+      actorType: "admin",
+      actorId: actor,
+    });
+    assert.equal(duplicate.duplicate, true);
+    assert.equal(duplicate.evidenceId, newer.evidenceId);
+    assert.equal((await db.query<{ n: number }>("select count(*)::int as n from evidence"))[0]?.n, 2);
+
+    const repair = await repairOneEvidence(db, newer.evidenceId);
+    assert.equal(repair.skipped, false);
+    const again = await repairOneEvidence(db, newer.evidenceId);
+    assert.equal(again.skipped, true);
+    assert.equal((await db.query<{ n: number }>("select count(*)::int as n from evidence"))[0]?.n, 2);
+    assert.equal((await db.query<{ n: number }>("select count(*)::int as n from verification_agencies"))[0]?.n, 1);
+
+    const nedbank = await createEntity(db, {
+      canonicalName: "Nedbank Limited",
+      registrationNumber: "1951/000009/06",
+      actorId: actor,
+      visibility: "draft",
+    });
+    const mismatched = await ingestDocument(db, {
+      bytes: new TextEncoder().encode(`
+        EmpowerLogic (Pty) Ltd
+        Reg. No. 1995/000523/07
+        BVA018
+        Measured entity: Nedbank Limited
+        Registration Number: 1951/000009/06
+        B-BBEE Status: Level One Contributor
+        Issue date: 1 May 2025
+        Expiry date: 30 April 2026
+        B-BBEE Certificate
+      `),
+      mimeType: "text/plain",
+      filename: "nedbank.txt",
+      evidenceType: "bee_certificate",
+      entityId: nedbank.id,
+      actorType: "admin",
+      actorId: actor,
+    });
+    const entityReg = (await db.query<{ registration_number: string | null }>(
+      "select registration_number from entities where id = $1",
+      [nedbank.id],
+    ))[0];
+    assert.equal(entityReg?.registration_number, "1951/000009/06");
+    assert.notEqual(mismatched.evidenceId, newer.evidenceId);
   });
 });

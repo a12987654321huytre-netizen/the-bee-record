@@ -7,6 +7,11 @@ import {
   type CorpusItem,
 } from "@/lib/bee/corpus-import.server";
 import { runDueSources, runSourceCheck } from "@/lib/bee/crawler.server";
+import {
+  repairCorpusStats,
+  repairEvidenceBatch,
+  repairLifecycleBatch,
+} from "@/lib/bee/repair.server";
 import { sql } from "@/lib/bee/sql.server";
 
 const evidenceSchema = z.object({
@@ -38,40 +43,19 @@ const itemSchema = z.object({
 });
 
 const bodySchema = z.object({
-  action: z.enum(["import", "crawl", "stats", "retry"]).optional(),
+  action: z.enum(["import", "crawl", "stats", "retry", "repair"]).optional(),
   items: z.array(itemSchema).min(1).max(3).optional(),
   crawlLimit: z.number().int().min(1).max(8).optional(),
   retryLimit: z.number().int().min(1).max(12).optional(),
+  repairLimit: z.number().int().min(1).max(12).optional(),
+  phase: z.enum(["extract", "lifecycle"]).optional(),
+  afterId: z.string().nullable().optional(),
   sourceId: z.string().optional(),
 });
 
 async function stats(db: Awaited<ReturnType<typeof sql>>) {
-  const q = async (text: string) => (await db.query<{ n: number }>(text))[0]?.n ?? 0;
-  return {
-    ok: true,
-    counts: {
-      entities: await q("select count(*)::int as n from entities where merged_into_id is null"),
-      published: await q(
-        "select count(*)::int as n from entities where visibility = 'public' and merged_into_id is null",
-      ),
-      evidence: await q("select count(*)::int as n from evidence"),
-      current: await q("select count(*)::int as n from evidence where lifecycle_state = 'current'"),
-      historical: await q(
-        "select count(*)::int as n from evidence where lifecycle_state in ('historical','superseded')",
-      ),
-      expired: await q("select count(*)::int as n from evidence where lifecycle_state = 'expired'"),
-      sources: await q("select count(*)::int as n from monitored_sources"),
-      verifiers: await q("select count(*)::int as n from verification_agencies"),
-      review: await q("select count(*)::int as n from review_items where status = 'pending'"),
-      checks: await q("select count(*)::int as n from source_checks"),
-      checksOk: await q(
-        "select count(*)::int as n from source_checks where failure_reason is null and completed_at is not null",
-      ),
-      checksFailed: await q(
-        "select count(*)::int as n from source_checks where failure_reason is not null",
-      ),
-    },
-  };
+  const counts = await repairCorpusStats(db);
+  return { ok: true, counts };
 }
 
 export const Route = createFileRoute("/api/corpus-import")({
@@ -83,7 +67,7 @@ export const Route = createFileRoute("/api/corpus-import")({
         }
         let json: unknown;
         try {
-          json = await request.json();
+          json = JSON.parse(await request.text());
         } catch {
           return Response.json({ ok: false, error: "Invalid JSON." }, { status: 400 });
         }
@@ -96,9 +80,41 @@ export const Route = createFileRoute("/api/corpus-import")({
         if (action === "stats") {
           return Response.json(await stats(db));
         }
+        if (action === "repair") {
+          const phase = parsed.data.phase ?? "extract";
+          if (phase === "lifecycle") {
+            const out = await repairLifecycleBatch(db, {
+              limit: Math.min(40, (parsed.data.repairLimit ?? 8) * 5),
+              afterId: parsed.data.afterId ?? null,
+            });
+            return Response.json({ ...(await stats(db)), phase, ...out });
+          }
+          const out = await repairEvidenceBatch(db, parsed.data.repairLimit ?? 6);
+          return Response.json({
+            ...(await stats(db)),
+            phase,
+            processed: out.processed,
+            skipped: out.skipped,
+            filled: out.filled,
+            agenciesLinked: out.agenciesLinked,
+            reviews: out.reviews,
+            remaining: out.remaining,
+            remainingExtract: out.remaining,
+            entityIds: out.entityIds,
+            results: out.results.map((r) => ({
+              evidenceId: r.evidenceId,
+              skipped: r.skipped,
+              parsed: r.parsed,
+              filled: r.filled,
+              agencyId: r.agencyId,
+              conflicts: r.conflicts,
+              error: r.error,
+            })),
+          });
+        }
         if (action === "retry") {
           const out = await retryUnpublished(db, parsed.data.retryLimit ?? 6);
-          return Response.json({ ok: true, ...out, ...(await stats(db)) });
+          return Response.json({ ...(await stats(db)), ...out });
         }
         if (action === "crawl") {
           if (parsed.data.sourceId) {

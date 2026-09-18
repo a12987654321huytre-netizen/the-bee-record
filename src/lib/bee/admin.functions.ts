@@ -90,6 +90,7 @@ export const getDashboard = createServerFn({ method: "GET" }).handler(async () =
   const review = await q("select count(*)::int as n from review_items where status = 'pending'");
   const matches = await q("select count(*)::int as n from review_items where status = 'pending' and type = 'uncertain_entity_match'");
   const submissions = await q("select count(*)::int as n from submissions where status = 'pending'");
+  const verifiers = await q("select count(*)::int as n from verification_agencies");
   const period = await db.query<{
     sources_checked: number;
     new_evidence: number;
@@ -124,7 +125,7 @@ export const getDashboard = createServerFn({ method: "GET" }).handler(async () =
     "select id, type, reason, generated_at from review_items where status = 'pending' order by generated_at desc limit 10",
   );
   return {
-    counts: { tracked, visible, sources, evidence, current, historical, expired, expiring, review, matches, submissions },
+    counts: { tracked, visible, sources, evidence, current, historical, expired, expiring, review, matches, submissions, verifiers },
     period: period[0] ?? {
       sources_checked: 0,
       new_evidence: 0,

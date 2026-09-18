@@ -23,14 +23,30 @@ export async function matchEntity(
   const extractedReg = input.extractedReg ? normalizeRegistration(input.extractedReg) : null;
 
   if (input.suggestedEntityId) {
-    const rows = await db.query<{ id: string; merged_into_id: string | null }>(
-      "select id, merged_into_id from entities where id = $1",
-      [input.suggestedEntityId],
-    );
+    const rows = await db.query<{
+      id: string;
+      merged_into_id: string | null;
+      registration_number_normalized: string | null;
+      canonical_name: string;
+    }>("select id, merged_into_id, registration_number_normalized, canonical_name from entities where id = $1", [
+      input.suggestedEntityId,
+    ]);
     const row = rows[0];
     if (row) {
+      const entityId = row.merged_into_id ?? row.id;
+      if (extractedReg && row.registration_number_normalized && extractedReg !== row.registration_number_normalized) {
+        return {
+          entityId,
+          method: "admin",
+          confidence: 0.4,
+          uncertain: true,
+          extractedName,
+          reason: "Linked entity registration number differs from the extracted registration number. The canonical identifier was not overwritten.",
+          conflict: "registration_number_conflict",
+        };
+      }
       return {
-        entityId: row.merged_into_id ?? row.id,
+        entityId,
         method: "admin",
         confidence: 1,
         uncertain: false,

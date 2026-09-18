@@ -10,6 +10,7 @@ export const MAX_REDIRECTS = 5;
 export const EXTRACTION_SCHEMA_VERSION = "extract-v1";
 export const PARSER_DETERMINISTIC = "deterministic/v1";
 export const PARSER_AI = "xai/grok-4.5";
+export const PARSER_REPAIR = "repair/v1";
 export const DEFAULT_CRAWLER_UA =
   "BEERecordBot/1.0 (public B-BBEE evidence index; research bot)";
 
@@ -27,6 +28,7 @@ export const BEE_FIELDS = [
   "verification_agency",
   "signatory",
   "document_type",
+  "certificate_number",
 ] as const;
 
 export type BeeField = (typeof BEE_FIELDS)[number];
@@ -87,6 +89,7 @@ export const CLAIM_FIELD_LABELS: Record<BeeField, string> = {
   verification_agency: "Verification agency",
   signatory: "Signatory",
   document_type: "Document type",
+  certificate_number: "Certificate / reference number",
 };
 
 export const EVIDENCE_TYPE_LABELS: Record<EvidenceType, string> = {
@@ -116,6 +119,9 @@ export const RECOGNIZED_DOCUMENT_TYPES: EvidenceType[] = [
   "integrated_report",
   "transformation_report",
 ];
+
+/** Documents that establish a current B-BBEE status for an entity. */
+export const STATUS_EVIDENCE_TYPES: EvidenceType[] = ["bee_certificate", "sworn_affidavit"];
 
 export const LIFECYCLE_LABELS: Record<string, string> = {
   discovered: "Discovered",
