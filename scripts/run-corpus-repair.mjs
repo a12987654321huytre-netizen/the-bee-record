@@ -10,7 +10,7 @@ const PROD = process.env.CORPUS_IMPORT_URL ?? "https://the-bee-record.vercel.app
 const tokenPath = resolve(process.cwd(), ".corpus-import-token");
 const logPath = resolve(process.cwd(), "data/repair-log.jsonl");
 const token = readFileSync(tokenPath, "utf8").trim();
-const extractLimit = Number(process.env.REPAIR_LIMIT ?? 6);
+const extractLimit = Number(process.env.REPAIR_LIMIT ?? 3);
 const retries = Number(process.env.REPAIR_RETRIES ?? 3);
 
 async function post(body, timeoutMs = 90_000) {
@@ -38,8 +38,12 @@ const started = await post({ action: "stats" }, 30_000);
 console.log("BEFORE", JSON.stringify(started.json?.counts ?? started.json, null, 2));
 appendFileSync(logPath, JSON.stringify({ at: new Date().toISOString(), phase: "before", ...started }) + "\n");
 
+const reset = await post({ action: "repair", phase: "reset" }, 60_000);
+console.log("RESET", JSON.stringify({ status: reset.status, runs: reset.json?.runs, claims: reset.json?.claims, garbage: reset.json?.garbageAgencies, remaining: reset.json?.counts?.remainingExtract }));
+appendFileSync(logPath, JSON.stringify({ at: new Date().toISOString(), phase: "reset", ...reset }) + "\n");
+
 let extractLoops = 0;
-while (extractLoops < 80) {
+while (extractLoops < 150) {
   extractLoops += 1;
   let last = null;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -66,8 +70,14 @@ while (extractLoops < 80) {
   }
   const remaining = last?.json?.remainingExtract ?? last?.json?.remaining ?? last?.json?.counts?.remainingExtract;
   const processed = last?.json?.processed ?? 0;
+  const parsed = Array.isArray(last?.json?.results)
+    ? last.json.results.filter((r) => r.parsed).length
+    : "?";
+  const fetched = Array.isArray(last?.json?.results)
+    ? last.json.results.filter((r) => r.fetchFallback).length
+    : "?";
   console.log(
-    `extract[${extractLoops}] HTTP ${last?.status} processed=${processed} remaining=${remaining} agencies=${last?.json?.counts?.verifiers} expired=${last?.json?.counts?.expired} current=${last?.json?.counts?.current}`,
+    `extract[${extractLoops}] HTTP ${last?.status} processed=${processed} parsed=${parsed} fetch=${fetched} remaining=${remaining} agencies=${last?.json?.counts?.verifiers} expired=${last?.json?.counts?.expired} current=${last?.json?.counts?.current} expirySet=${last?.json?.counts?.expirySet}`,
   );
   appendFileSync(logPath, JSON.stringify({ at: new Date().toISOString(), phase: "extract", ...last }) + "\n");
   if (!last?.json?.ok) {

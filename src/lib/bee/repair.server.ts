@@ -1,9 +1,10 @@
-import { ensureAgency, ensureSignatory } from "./agencies.server.ts";
+import { ensureAgency, ensureSignatory, canonicalAgencyName } from "./agencies.server.ts";
 import { workingClaims, workingValue } from "./claims.server.ts";
 import { PARSER_REPAIR } from "./constants.ts";
 import { EXTRACTION_SCHEMA_VERSION } from "./constants.ts";
 import { jsonText, type Sql } from "./db-types.ts";
 import { extractBva, extractDeterministically } from "./deterministic-extract.ts";
+import { safeFetch } from "./fetch.server.ts";
 import { newId } from "./ids.ts";
 import { classifyPublishedEvidence, mergeRepairClaims } from "./lifecycle.ts";
 import { normalizeRegistration } from "./normalize.ts";
@@ -24,6 +25,8 @@ export type RepairEvidenceResult = {
   conflicts: Array<{ field: string; previous: string; incoming: string }>;
   agencyId: string | null;
   reviewItemIds: string[];
+  textLength?: number;
+  fetchFallback?: boolean;
   error?: string;
 };
 
@@ -150,9 +153,11 @@ export async function repairOneEvidence(db: Sql, evidenceId: string): Promise<Re
     original_filename: string | null;
     publication_state: string;
     evidence_type: string;
-  }>("select id, asset_id, mime_type, original_filename, publication_state, evidence_type from evidence where id = $1", [
-    evidenceId,
-  ]);
+    source_url: string | null;
+  }>(
+    "select id, asset_id, mime_type, original_filename, publication_state, evidence_type, source_url from evidence where id = $1",
+    [evidenceId],
+  );
   const row = evidence[0];
   if (!row) {
     result.error = "Evidence not found.";
@@ -179,14 +184,33 @@ export async function repairOneEvidence(db: Sql, evidenceId: string): Promise<Re
   const previous = await workingClaims(db, evidenceId);
 
   let text = "";
-  if (row.asset_id) {
-    const asset = await readAsset(db, row.asset_id);
-    if (asset) {
-      const parsed = await parseDocument(asset.bytes, row.mime_type ?? asset.mimeType, row.original_filename);
-      text = parsed.text;
-      result.parsed = Boolean(text.trim());
+  try {
+    if (row.asset_id) {
+      const asset = await readAsset(db, row.asset_id);
+      if (asset) {
+        const parsed = await parseDocument(asset.bytes, row.mime_type ?? asset.mimeType, row.original_filename ?? row.source_url);
+        text = parsed.text;
+      }
     }
+    if (!text.trim() && row.source_url) {
+      const fetched = await safeFetch(row.source_url);
+      if (fetched.ok) {
+        const parsed = await parseDocument(
+          fetched.bytes,
+          fetched.mimeType ?? row.mime_type,
+          row.original_filename ?? row.source_url,
+        );
+        text = parsed.text;
+        result.fetchFallback = true;
+      } else {
+        result.error = fetched.reason;
+      }
+    }
+  } catch (err) {
+    result.error = err instanceof Error ? err.message : String(err);
   }
+  result.parsed = Boolean(text.trim());
+  result.textLength = text.trim().length;
 
   const extracted = text.trim() ? extractDeterministically(text) : { claims: [], warnings: ["No extractable text was available."], ambiguity: [] };
   const previousValues = new Map(previous.map((c) => [c.field_key, workingValue(c)]));
@@ -275,7 +299,7 @@ export async function repairOneEvidence(db: Sql, evidenceId: string): Promise<Re
 
 export async function repairEvidenceBatch(
   db: Sql,
-  limit = 6,
+  limit = 3,
 ): Promise<{
   processed: number;
   skipped: number;
@@ -410,6 +434,56 @@ export async function repairCorpusStats(db: Sql) {
     remainingExtract: await remainingRepairCount(db),
     fieldOverrides: await q("select count(*)::int as n from field_overrides where locked = 1"),
   };
+}
+
+export async function resetRepairRuns(db: Sql): Promise<{ runs: number; claims: number; garbageAgencies: number }> {
+  const runs = await db.query<{ n: number }>(
+    "select count(*)::int as n from extraction_runs where parser = $1",
+    [PARSER_REPAIR],
+  );
+  await db.query(
+    `update published_claims set claim_id = null
+     where claim_id in (
+       select c.id from extracted_claims c
+       join extraction_runs r on r.id = c.extraction_run_id
+       where r.parser = $1
+     )`,
+    [PARSER_REPAIR],
+  );
+  const claims = await db.query<{ n: number }>(
+    `select count(*)::int as n from extracted_claims c
+     join extraction_runs r on r.id = c.extraction_run_id
+     where r.parser = $1`,
+    [PARSER_REPAIR],
+  );
+  await db.query(
+    `delete from extracted_claims
+     where extraction_run_id in (select id from extraction_runs where parser = $1)`,
+    [PARSER_REPAIR],
+  );
+  await db.query("delete from extraction_runs where parser = $1", [PARSER_REPAIR]);
+  const garbageAgencies = await cleanupGarbageAgencies(db);
+  return { runs: runs[0]?.n ?? 0, claims: claims[0]?.n ?? 0, garbageAgencies };
+}
+
+export async function cleanupGarbageAgencies(db: Sql): Promise<number> {
+  const agencies = await db.query<{ id: string; name: string }>("select id, name from verification_agencies");
+  let removed = 0;
+  for (const agency of agencies) {
+    if (canonicalAgencyName(agency.name)) continue;
+    await db.query("update evidence set verifier_agency_id = null, updated_at = now() where verifier_agency_id = $1", [
+      agency.id,
+    ]);
+    await db.query("update entity_current_state set verifier_agency_id = null, updated_at = now() where verifier_agency_id = $1", [
+      agency.id,
+    ]);
+    await db.query("update signatories set agency_id = null where agency_id = $1", [agency.id]);
+    await db.query("delete from agency_accreditations where agency_id = $1", [agency.id]);
+    await db.query("delete from agency_aliases where agency_id = $1", [agency.id]);
+    await db.query("delete from verification_agencies where id = $1", [agency.id]);
+    removed += 1;
+  }
+  return removed;
 }
 
 export { classifyPublishedEvidence };

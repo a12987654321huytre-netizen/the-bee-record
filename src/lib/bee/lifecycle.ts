@@ -1,5 +1,5 @@
 import { STATUS_EVIDENCE_TYPES, RECOGNIZED_DOCUMENT_TYPES } from "./constants.ts";
-import { compareIso, expiryStatus, toIsoDate } from "./dates.ts";
+import { compareIso, daysBetween, expiryStatus, toIsoDate } from "./dates.ts";
 
 export type LifecycleEvidence = {
   id: string;
@@ -54,6 +54,15 @@ function isExpired(e: LifecycleEvidence, now: string): boolean {
   return Boolean(expiry && expiry < now);
 }
 
+/** Issue date is more than 13 months old and no expiry was extracted — do not keep CURRENT. */
+function tooOldWithoutExpiry(e: LifecycleEvidence, now: string): boolean {
+  if (toIsoDate(e.expiry_date)) return false;
+  const issue = toIsoDate(e.issue_date);
+  if (!issue) return false;
+  const gap = daysBetween(issue, now);
+  return gap != null && gap > 400;
+}
+
 /**
  * Classify published evidence for a single legal entity.
  * Never looks at other entities. Status certificates compete for CURRENT;
@@ -85,9 +94,13 @@ export function classifyPublishedEvidence(
 
   for (const row of published) {
     if (isExpired(row, now)) decisions.set(row.id, "expired");
+    else if (tooOldWithoutExpiry(row, now)) decisions.set(row.id, "historical");
   }
 
-  const livePool = effectivePool.filter((r) => decisions.get(r.id) !== "expired").sort(sortNewestFirst);
+  const livePool = effectivePool.filter((r) => {
+    const state = decisions.get(r.id);
+    return state !== "expired" && state !== "historical";
+  }).sort(sortNewestFirst);
   let currentEvidenceId: string | null = null;
   let disputed = false;
   let reason: string | null = null;

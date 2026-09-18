@@ -158,6 +158,25 @@ describe("deterministic extractor", () => {
     assert.equal(fields.verification_agency, normalizeName("EmpowerLogic (Pty) Ltd"));
   });
 
+  it("reads Mosela-style certificates without taking the gazette date or agency registration", () => {
+    const text = `
+      This certificate has been issued in terms of Government Gazette dated 01 December 2017 and it is valid for one year from date of issue.
+      Mosela Rating Agency (Pty) Ltd Reg no: 2007/029757/07
+      FirstRand Limited
+      Reg No. 1966/010753/06
+      B-BBEE Status Level Level 1
+      Date of issue: 15/09/2025
+      Technical Signatory - Nokuthula Sharon Lozane Expiry Date : 14/09/2026
+    `;
+    const result = extractDeterministically(text);
+    const fields = Object.fromEntries(result.claims.map((c) => [c.field, c.normalized_value]));
+    assert.equal(fields.expiry_date, "2026-09-14");
+    assert.equal(fields.issue_date, "2025-09-15");
+    assert.equal(fields.registration_number, "196601075306");
+    assert.equal(fields.verification_agency, normalizeName("Mosela Rating Agency (Pty) Ltd"));
+    assert.equal(fields.bee_level, "1");
+  });
+
   it("reads LEVEL ONE CONTRIBUTOR wording", () => {
     const result = extractDeterministically("B-BBEE Certificate\nLEVEL ONE CONTRIBUTOR\nMeasured entity: Shoprite Holdings Limited");
     assert.equal(result.claims.find((c) => c.field === "bee_level")?.normalized_value, "1");
@@ -214,6 +233,25 @@ describe("lifecycle classification", () => {
     assert.equal(result.decisions[0]?.lifecycle, "expired");
     assert.equal(result.currentEvidenceId, null);
     assert.equal(result.supportingEvidenceId, "evd_old");
+  });
+
+  it("does not keep a year-old certificate current when expiry was never extracted", () => {
+    const result = classifyPublishedEvidence(
+      [
+        {
+          id: "evd_stale",
+          evidence_type: "bee_certificate",
+          issue_date: "2024-11-24",
+          expiry_date: null,
+          discovered_at: "2024-11-25",
+          publication_state: "published",
+        },
+      ],
+      "2026-09-18",
+      90,
+    );
+    assert.equal(result.decisions[0]?.lifecycle, "historical");
+    assert.equal(result.currentEvidenceId, null);
   });
 
   it("does not mix two legal entities", () => {

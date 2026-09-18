@@ -5,6 +5,7 @@ export { jsonParse, jsonText, uniqueSlug } from "./db-types.ts";
 function serializeCell(value: unknown): unknown {
   if (value instanceof Date) return value.toISOString();
   if (typeof value === "bigint") return Number(value);
+  if (value instanceof Uint8Array) return value;
   return value;
 }
 

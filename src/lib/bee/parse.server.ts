@@ -53,6 +53,11 @@ export function extractAnchorHints(html: string, baseUrl: string): Array<{ url: 
   return out;
 }
 
+function looksLikePdf(bytes: Uint8Array, mime: string, name: string): boolean {
+  if (mime.includes("pdf") || /\.pdf(\b|$)/i.test(name)) return true;
+  return bytes.byteLength >= 5 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
+}
+
 export async function parseDocument(
   bytes: Uint8Array,
   mimeType: string | null,
@@ -60,7 +65,7 @@ export async function parseDocument(
 ): Promise<ParsedDocument> {
   const mime = (mimeType ?? "").toLowerCase();
   const name = (filename ?? "").toLowerCase();
-  if (mime.includes("pdf") || name.endsWith(".pdf")) {
+  if (looksLikePdf(bytes, mime, name)) {
     try {
       const result = await extractText(bytes, { mergePages: true });
       const rawText = result.text as string | string[] | undefined;

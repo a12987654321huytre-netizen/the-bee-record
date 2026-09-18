@@ -9,7 +9,7 @@ const DATE_TOKEN =
   /\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/\-\s]+[A-Za-z]{3,9}[/\-\s,]+\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|\d{1,2}[/\-.]\d{1,2}[/\-.]\d{4})\b/g;
 
 const ISSUE_LABEL =
-  /(?:original\s+)?(?:date\s+of\s+)?(?:issue|issued)(?:\s+date)?|certificate\s+date|effective\s+date\s+used|initial\s+issue\s+date/i;
+  /(?:original\s+)?(?<!from\s)(?:date\s+of\s+issue|issue\s+date|issued\s+on|issued\s+date)|certificate\s+date|effective\s+date\s+used|initial\s+issue\s+date/i;
 
 const EXPIRY_LABEL =
   /(?:certificate\s+)?(?:date\s+of\s+)?expir(?:y|es|ation)(?:\s+date)?|valid\s+(?:until|to|thru|through)|verification\s+expir(?:y|ation)\s+date/i;
@@ -18,7 +18,7 @@ const AGENCY_NOISE =
   /\b(sanas\s+accredited|bva\s*\d+|reg(?:istration)?(?:\.|\s*)(?:no\.?|number).{0,20}\d{4}\s*\/\s*\d{6}|per\s+[A-Z]|member\s*[-–]\s*verification)\b/gi;
 
 const AGENCY_NEAR =
-  /empowerlogic|aqrate|honeycomb|empowerdex|mpower\s+ratings|siyandisa|msct\s+bee|renaissance\s+sa|verification\s+networx|vos\s+quantum|bdo\s+verification|sng\s+grant|moore\s+stephens|beesure|ncca|accountants/i;
+  /empowerlogic|aqrate|honeycomb|empowerdex|mpower\s+ratings|siyandisa|msct\s+bee|renaissance\s+sa|verification\s+networx|vos\s+quantum|bdo\s+verification|sng\s+grant|moore\s+stephens|beesure|ncca|mosela|beescore|accountants\s+on\s+site/i;
 
 const KNOWN_AGENCIES: Array<{ name: string; pattern: RegExp; bva?: string }> = [
   { name: "EmpowerLogic (Pty) Ltd", pattern: /empower\s*logic/i, bva: "BVA018" },
@@ -32,6 +32,8 @@ const KNOWN_AGENCIES: Array<{ name: string; pattern: RegExp; bva?: string }> = [
   { name: "1st Verification Networx (Pty) Ltd", pattern: /1st\s+verification\s+networx|first\s+verification\s+networx/i },
   { name: "Renaissance SA Ratings", pattern: /renaissance\s+sa\s+ratings/i },
   { name: "VOS Quantum Solutions CC", pattern: /vos\s+quantum|vqs\s+quantum/i },
+  { name: "Mosela Rating Agency (Pty) Ltd", pattern: /mosela\s+rating/i },
+  { name: "Beescore (Pty) Ltd", pattern: /\bbeescore\b/i },
   { name: "IRBA", pattern: /\birba\b/ },
 ];
 
@@ -152,7 +154,11 @@ function pairedIssueExpiry(dates: LocatedDate[], text: string): { issue: Located
 }
 
 function deriveExpiryFromValidity(text: string, issueIso: string): { iso: string; raw: string; warning: string } | null {
-  if (!/valid(?:ity)?\s+(?:for\s+)?(?:a\s+)?(?:period\s+of\s+)?12\s+months/i.test(text) && !/period\s+of\s+validity[:\s]+12\s+months/i.test(text)) {
+  if (
+    !/valid(?:ity)?\s+(?:for\s+)?(?:a\s+)?(?:period\s+of\s+)?(?:12\s+months|one\s+year)/i.test(text) &&
+    !/period\s+of\s+validity[:\s]+12\s+months/i.test(text) &&
+    !/valid\s+for\s+one\s+year\s+from\s+date\s+of\s+issue/i.test(text)
+  ) {
     return null;
   }
   const plusYear = addMonthsIso(issueIso, 12);
@@ -190,33 +196,55 @@ function extractLevel(text: string): ExtractionClaim | null {
   return null;
 }
 
-function extractRegistration(text: string): ExtractionClaim | null {
-  const labeled = text.match(
-    /(?:measured\s+entity.{0,80})?(?:company\s+)?(?:registration(?:\s+number)?|reg(?:istration)?(?:\.|\s*)(?:no\.?|number)|enterprise\s+(?:number|registration))[:\s#]*([0-9]{4}\s*\/\s*[0-9]{6}\s*\/\s*[0-9]{2})/i,
-  );
-  if (labeled?.[1]) {
-    const around = text.slice(Math.max(0, (labeled.index ?? 0) - 80), (labeled.index ?? 0) + labeled[0].length + 40);
-    if (AGENCY_NEAR.test(around) && !/measured\s+entity|company\s+name|enterprise\s+name/i.test(around)) {
-      /* fall through and scan other regs */
-    } else {
-      return claim("registration_number", labeled[1], normalizeRegistration(labeled[1]), labeled[0], null, 0.9);
-    }
+function lineWindow(text: string, index: number): { line: string; previous: string } {
+  const lineStart = text.lastIndexOf("\n", Math.max(0, index - 1));
+  const start = lineStart < 0 ? 0 : lineStart + 1;
+  const lineEnd = text.indexOf("\n", index);
+  const end = lineEnd < 0 ? text.length : lineEnd;
+  const prevEnd = start > 0 ? start - 1 : 0;
+  const prevStart = prevEnd <= 0 ? 0 : text.lastIndexOf("\n", Math.max(0, prevEnd - 1)) + 1;
+  return {
+    line: text.slice(start, end),
+    previous: text.slice(prevStart, prevEnd),
+  };
+}
+
+function isAgencyOwnedRegistration(ctx: { line: string; previous: string }): boolean {
+  if (/measured\s+entity|company\s+name|enterprise\s+name/i.test(`${ctx.previous} ${ctx.line}`)) {
+    return false;
   }
+  if (AGENCY_NEAR.test(ctx.line)) return true;
+  if (AGENCY_NEAR.test(ctx.previous) && /reg(?:istration)?/i.test(ctx.line)) return true;
+  if (/\b(sanas|bva\s*\d+)\b/i.test(ctx.line)) return true;
+  return false;
+}
+
+function extractRegistration(text: string): ExtractionClaim | null {
   const all: Array<{ raw: string; index: number }> = [];
   const re = new RegExp(ZA_REG.source, "g");
   let m: RegExpExecArray | null;
   while ((m = re.exec(text))) {
     all.push({ raw: m[1]!, index: m.index });
   }
+  if (!all.length) return null;
+
+  const scored: Array<{ raw: string; score: number; labeled: boolean }> = [];
   for (const item of all) {
-    const around = text.slice(Math.max(0, item.index - 90), item.index + item.raw.length + 50);
-    if (AGENCY_NEAR.test(around)) continue;
-    if (/sanas|bva\s*\d+|verification\s+agency|rating\s+agency/i.test(around) && !/measured\s+entity|company\s+name/i.test(around)) {
-      continue;
-    }
-    return claim("registration_number", item.raw, normalizeRegistration(item.raw), item.raw, null, 0.78);
+    const ctx = lineWindow(text, item.index);
+    if (isAgencyOwnedRegistration(ctx)) continue;
+    const blob = `${ctx.previous} ${ctx.line}`;
+    const labeled = /(?:company\s+)?(?:registration(?:\s+number)?|reg(?:istration)?(?:\.|\s*)(?:no\.?|number)|enterprise\s+(?:number|registration))/i.test(
+      ctx.line,
+    );
+    let score = 1;
+    if (/measured\s+entity|company\s+name|enterprise\s+name/i.test(blob)) score += 3;
+    if (labeled) score += 1;
+    scored.push({ raw: item.raw, score, labeled });
   }
-  return null;
+  scored.sort((a, b) => b.score - a.score);
+  const best = scored[0];
+  if (!best) return null;
+  return claim("registration_number", best.raw, normalizeRegistration(best.raw), best.raw, null, best.labeled ? 0.9 : 0.78);
 }
 
 function cleanAgencyName(raw: string): string {
@@ -234,15 +262,25 @@ function extractAgency(text: string): ExtractionClaim | null {
     }
   }
   const labeled = text.match(
-    /(?:b-?bbee\s+)?(?:verification|rating)\s+agency[:\s]+([A-Za-z0-9][^\n]{2,90})/i,
-  ) ?? text.match(/verified\s+by[:\s]+([A-Za-z0-9][^\n]{2,90})/i);
+    /(?:^|\n)\s*(?:b-?bbee\s+)?(?:verification|rating)\s+agency[:\s]+([A-Z][^\n]{2,80})/i,
+  ) ?? text.match(/(?:^|\n)\s*verified\s+by[:\s]+([A-Z][^\n]{2,80})/i);
   if (labeled?.[1]) {
     const name = cleanAgencyName(labeled[1]);
-    if (name.length >= 3 && name.length <= 80 && !/^(yes|no|n\/a|date|level)$/i.test(name)) {
+    if (isPlausibleAgencyName(name)) {
       return claim("verification_agency", name, normalizeName(name), labeled[0], null, 0.7);
     }
   }
   return null;
+}
+
+function isPlausibleAgencyName(name: string): boolean {
+  if (name.length < 3 || name.length > 80) return false;
+  if (/^(yes|no|n\/a|date|level)$/i.test(name)) return false;
+  if (/measured entity|technical signatory|management of|broad based|gazette|scorecard|procurement/i.test(name)) {
+    return false;
+  }
+  if (name.split(/\s+/).length > 10) return false;
+  return /pty|ltd|inc|cc\b|agency|ratings|verification|empower|mosela|honeycomb|aqrate|logic|beescore|irba/i.test(name);
 }
 
 function extractBva(text: string): string | null {
@@ -275,6 +313,9 @@ export function extractDeterministically(text: string): ExtractionResult {
   const dates = locateDates(text);
   let issue = labeledDate(text, dates, ISSUE_LABEL);
   let expiry = labeledDate(text, dates, EXPIRY_LABEL);
+  if (issue?.iso && issue.iso < "2020-01-01") {
+    issue = null;
+  }
 
   if ((!issue?.iso || !expiry?.iso) || (issue?.iso && expiry?.iso && issue.iso === expiry.iso)) {
     const paired = pairedIssueExpiry(dates, text);

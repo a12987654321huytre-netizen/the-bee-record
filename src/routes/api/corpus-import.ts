@@ -11,6 +11,7 @@ import {
   repairCorpusStats,
   repairEvidenceBatch,
   repairLifecycleBatch,
+  resetRepairRuns,
 } from "@/lib/bee/repair.server";
 import { sql } from "@/lib/bee/sql.server";
 
@@ -48,7 +49,7 @@ const bodySchema = z.object({
   crawlLimit: z.number().int().min(1).max(8).optional(),
   retryLimit: z.number().int().min(1).max(12).optional(),
   repairLimit: z.number().int().min(1).max(12).optional(),
-  phase: z.enum(["extract", "lifecycle"]).optional(),
+  phase: z.enum(["extract", "lifecycle", "reset"]).optional(),
   afterId: z.string().nullable().optional(),
   sourceId: z.string().optional(),
 });
@@ -82,6 +83,10 @@ export const Route = createFileRoute("/api/corpus-import")({
         }
         if (action === "repair") {
           const phase = parsed.data.phase ?? "extract";
+          if (phase === "reset") {
+            const out = await resetRepairRuns(db);
+            return Response.json({ ...(await stats(db)), phase, ...out });
+          }
           if (phase === "lifecycle") {
             const out = await repairLifecycleBatch(db, {
               limit: Math.min(40, (parsed.data.repairLimit ?? 8) * 5),
@@ -89,7 +94,7 @@ export const Route = createFileRoute("/api/corpus-import")({
             });
             return Response.json({ ...(await stats(db)), phase, ...out });
           }
-          const out = await repairEvidenceBatch(db, parsed.data.repairLimit ?? 6);
+          const out = await repairEvidenceBatch(db, parsed.data.repairLimit ?? 3);
           return Response.json({
             ...(await stats(db)),
             phase,
@@ -108,6 +113,8 @@ export const Route = createFileRoute("/api/corpus-import")({
               filled: r.filled,
               agencyId: r.agencyId,
               conflicts: r.conflicts,
+              textLength: r.textLength,
+              fetchFallback: r.fetchFallback,
               error: r.error,
             })),
           });

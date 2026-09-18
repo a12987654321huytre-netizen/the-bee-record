@@ -27,16 +27,44 @@ export async function storeAsset(
   return { assetId: id, hash, byteSize: input.bytes.byteLength, created: true };
 }
 
+export function coerceBytes(content: unknown): Uint8Array | null {
+  if (content == null) return null;
+  if (content instanceof Uint8Array) {
+    return content.byteLength ? content : null;
+  }
+  if (typeof Buffer !== "undefined" && Buffer.isBuffer(content)) {
+    return content.byteLength ? new Uint8Array(content.buffer, content.byteOffset, content.byteLength) : null;
+  }
+  if (typeof content === "string") {
+    const hex = content.startsWith("\\x") ? content.slice(2) : content.startsWith("0x") ? content.slice(2) : content;
+    if (hex.length >= 8 && hex.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(hex)) {
+      return Uint8Array.from(Buffer.from(hex, "hex"));
+    }
+    const encoded = new TextEncoder().encode(content);
+    return encoded.byteLength ? encoded : null;
+  }
+  if (typeof content === "object") {
+    const rec = content as { type?: string; data?: unknown; bytes?: unknown };
+    if (Array.isArray(rec.data)) return Uint8Array.from(rec.data as number[]);
+    if (ArrayBuffer.isView(content)) {
+      const view = content as ArrayBufferView;
+      return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+    }
+  }
+  return null;
+}
+
 export async function readAsset(
   db: Sql,
   assetId: string,
 ): Promise<{ bytes: Uint8Array; mimeType: string | null; hash: string } | null> {
-  const rows = await db.query<{ content: Uint8Array | Buffer | null; mime_type: string | null; content_hash: string }>(
-    "select content, mime_type, content_hash from evidence_assets where id = $1",
+  const rows = await db.query<{ content: unknown; mime_type: string | null; content_hash: string; byte_size: number | null }>(
+    "select content, mime_type, content_hash, byte_size from evidence_assets where id = $1",
     [assetId],
   );
   const row = rows[0];
-  if (!row || !row.content) return null;
-  const bytes = row.content instanceof Uint8Array ? row.content : new Uint8Array(row.content);
+  if (!row) return null;
+  const bytes = coerceBytes(row.content);
+  if (!bytes?.byteLength) return null;
   return { bytes, mimeType: row.mime_type, hash: row.content_hash };
 }

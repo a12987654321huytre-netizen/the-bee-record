@@ -3,12 +3,16 @@ import { uniqueSlug, type Sql } from "./db-types.ts";
 import { newId } from "./ids.ts";
 import { normalizeName, slugify } from "./normalize.ts";
 
-const REJECT_NAMES = /^(sanas|yes|no|n a|na|n\/a|date|level|bee|b bbee|verification agency|rating agency|broad based black economic empowerment)$/;
+const REJECT_NAMES =
+  /^(sanas|yes|no|n a|na|n\/a|date|level|bee|b bbee|verification agency|rating agency|broad based black economic|broad based black economic empowerment|name of technical signatory|technical signatory|measured entity|by management of measured entity and is an)$/;
 
 export function canonicalAgencyName(raw: string): string | null {
   const trimmed = raw.replace(/\s+/g, " ").trim();
   if (trimmed.length < 3 || trimmed.length > 120) return null;
   if (REJECT_NAMES.test(normalizeName(trimmed))) return null;
+  if (/measured entity|technical signatory|management of|gazette|scorecard|procurement recognition/i.test(trimmed)) {
+    return null;
+  }
   for (const known of KNOWN_AGENCIES) {
     if (known.pattern.test(trimmed)) return known.name;
   }
