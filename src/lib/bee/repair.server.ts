@@ -1,8 +1,9 @@
 import { ensureAgency, ensureSignatory, canonicalAgencyName } from "./agencies.server.ts";
 import { workingClaims, workingValue } from "./claims.server.ts";
-import { PARSER_REPAIR } from "./constants.ts";
+import { PARSER_REPAIR, PARSER_SANITIZE } from "./constants.ts";
 import { EXTRACTION_SCHEMA_VERSION } from "./constants.ts";
 import { jsonText, type Sql } from "./db-types.ts";
+import { canonicalFieldKey, isPublicClaimValue } from "./claim-quality.ts";
 import { extractBva, extractDeterministically } from "./deterministic-extract.ts";
 import { safeFetch } from "./fetch.server.ts";
 import { newId } from "./ids.ts";
@@ -35,13 +36,14 @@ async function persistRepairRun(
   evidenceId: string,
   claims: ReturnType<typeof mergeRepairClaims>["claims"],
   warnings: string[],
+  parser = PARSER_REPAIR,
 ): Promise<string> {
   const runId = newId("xrn");
   await db.query(
     `insert into extraction_runs
       (id, evidence_id, parser, model, schema_version, completed_at, success, validated_response)
      values ($1,$2,$3,null,$4,now(),1,$5)`,
-    [runId, evidenceId, PARSER_REPAIR, EXTRACTION_SCHEMA_VERSION, jsonText({ claims, warnings })],
+    [runId, evidenceId, parser, EXTRACTION_SCHEMA_VERSION, jsonText({ claims, warnings })],
   );
   for (const claim of claims) {
     await db.query(
@@ -123,6 +125,18 @@ export async function remainingRepairCount(db: Sql): Promise<number> {
        where r.evidence_id = e.id and r.parser = $1 and r.success = 1
      )`,
     [PARSER_REPAIR],
+  );
+  return rows[0]?.n ?? 0;
+}
+
+export async function remainingSanitizeCount(db: Sql): Promise<number> {
+  const rows = await db.query<{ n: number }>(
+    `select count(*)::int as n from evidence e
+     where not exists (
+       select 1 from extraction_runs r
+       where r.evidence_id = e.id and r.parser = $1 and r.success = 1
+     )`,
+    [PARSER_SANITIZE],
   );
   return rows[0]?.n ?? 0;
 }
@@ -222,6 +236,7 @@ export async function repairOneEvidence(db: Sql, evidenceId: string): Promise<Re
     lockedFields: new Set(locks.keys()),
     entityReg: entity?.registration_number_normalized ?? null,
     evidencePublished: row.publication_state === "published",
+    linkedName: entity?.canonical_name ?? null,
   });
   result.conflicts = merged.conflicts;
 
@@ -433,6 +448,11 @@ export async function repairCorpusStats(db: Sql) {
     expiryMissing: await q("select count(*)::int as n from evidence where expiry_date is null"),
     review: await q("select count(*)::int as n from review_items where status = 'pending'"),
     remainingExtract: await remainingRepairCount(db),
+    remainingSanitize: await remainingSanitizeCount(db),
+    unknownValidity: await q("select count(*)::int as n from evidence where lifecycle_state = 'unknown_validity'"),
+    currentWithoutExpiry: await q(
+      "select count(*)::int as n from evidence where lifecycle_state in ('current','expiring_soon') and expiry_date is null",
+    ),
     fieldOverrides: await q("select count(*)::int as n from field_overrides where locked = 1"),
   };
 }
@@ -517,6 +537,209 @@ export async function resetEqualDateRepairRuns(db: Sql): Promise<{ evidence: num
   );
   await db.query(`delete from extraction_runs where parser = $1 and evidence_id = any($2)`, [PARSER_REPAIR, ids]);
   return { evidence: ids.length, runs: runs[0]?.n ?? 0 };
+}
+
+export async function sanitizeOneEvidence(db: Sql, evidenceId: string): Promise<RepairEvidenceResult> {
+  const result: RepairEvidenceResult = {
+    evidenceId,
+    skipped: false,
+    parsed: false,
+    filled: [],
+    conflicts: [],
+    agencyId: null,
+    reviewItemIds: [],
+  };
+  const already = await db.query<{ id: string }>(
+    "select id from extraction_runs where evidence_id = $1 and parser = $2 and success = 1 limit 1",
+    [evidenceId, PARSER_SANITIZE],
+  );
+  if (already[0]) {
+    result.skipped = true;
+    return result;
+  }
+
+  const evidence = await db.query<{
+    id: string;
+    asset_id: string | null;
+    mime_type: string | null;
+    original_filename: string | null;
+    publication_state: string;
+    evidence_type: string;
+    source_url: string | null;
+  }>(
+    "select id, asset_id, mime_type, original_filename, publication_state, evidence_type, source_url from evidence where id = $1",
+    [evidenceId],
+  );
+  const row = evidence[0];
+  if (!row) {
+    result.error = "Evidence not found.";
+    return result;
+  }
+
+  const links = await db.query<{
+    entity_id: string;
+    registration_number: string | null;
+    registration_number_normalized: string | null;
+    canonical_name: string;
+  }>(
+    `select e.id as entity_id, e.registration_number, e.registration_number_normalized, e.canonical_name
+     from evidence_entity_links l
+     join entities e on e.id = l.entity_id
+     where l.evidence_id = $1 and l.link_state in ('confirmed','extracted','candidate')
+       and e.merged_into_id is null
+     order by case l.link_state when 'confirmed' then 0 when 'extracted' then 1 else 2 end
+     limit 1`,
+    [evidenceId],
+  );
+  const entity = links[0] ?? null;
+  const locks = entity ? await lockedFields(db, entity.entity_id) : new Map();
+  const previous = await workingClaims(db, evidenceId);
+  const linked = { canonicalName: entity?.canonical_name ?? null };
+
+  const nameInvalid = previous.some((c) => {
+    const field = canonicalFieldKey(c.field_key);
+    if (field !== "measured_entity" && field !== "legal_entity_name" && field !== "trading_name") return false;
+    const value = workingValue(c);
+    return Boolean(value) && !isPublicClaimValue(field, value, linked);
+  });
+
+  let text = "";
+  try {
+    if (nameInvalid) {
+      if (row.asset_id) {
+        const asset = await readAsset(db, row.asset_id);
+        if (asset) {
+          const parsed = await parseDocument(asset.bytes, row.mime_type ?? asset.mimeType, row.original_filename);
+          text = parsed.text;
+        }
+      }
+      if (!text.trim() && row.source_url) {
+        const fetched = await safeFetch(row.source_url);
+        if (fetched.ok) {
+          const parsed = await parseDocument(fetched.bytes, fetched.mimeType ?? row.mime_type, row.original_filename ?? row.source_url);
+          text = parsed.text;
+          result.fetchFallback = true;
+        } else {
+          result.error = fetched.reason;
+        }
+      }
+    }
+  } catch (err) {
+    result.error = err instanceof Error ? err.message : String(err);
+  }
+  result.parsed = Boolean(text.trim());
+  result.textLength = text.trim().length;
+
+  const extracted = text.trim()
+    ? extractDeterministically(text)
+    : { claims: [], warnings: [], ambiguity: [] };
+  const previousValues = new Map(previous.map((c) => [c.field_key, workingValue(c)]));
+  const merged = mergeRepairClaims({
+    previous,
+    extracted: extracted.claims,
+    lockedFields: new Set(locks.keys()),
+    entityReg: entity?.registration_number_normalized ?? null,
+    evidencePublished: row.publication_state === "published",
+    linkedName: entity?.canonical_name ?? null,
+  });
+  result.conflicts = merged.conflicts;
+
+  const suppressed: string[] = [];
+  for (const [field, value] of previousValues) {
+    const key = canonicalFieldKey(field);
+    const after = merged.claims.find((c) => c.field_key === field);
+    const afterVal = after ? after.edited_value?.trim() || after.normalized_value || after.raw_value : null;
+    if (value && !afterVal && !isPublicClaimValue(key, value, linked)) {
+      suppressed.push(field);
+    }
+  }
+  result.filled = suppressed;
+
+  await persistRepairRun(
+    db,
+    evidenceId,
+    merged.claims,
+    [
+      ...extracted.warnings,
+      ...extracted.ambiguity,
+      ...suppressed.map((f) => `Suppressed invalid ${f}.`),
+      ...merged.conflicts.map((c) => `${c.field}: kept ${c.previous}; incoming ${c.incoming}`),
+    ],
+    PARSER_SANITIZE,
+  );
+
+  const claims = await workingClaims(db, evidenceId);
+  const agencyName = workingValue(claims.find((c) => c.field_key === "verification_agency"));
+  const bva = text ? extractBva(text) : null;
+  const agencyId = await ensureAgency(db, { name: agencyName, bva, evidenceId });
+  result.agencyId = agencyId;
+  const signatoryName = workingValue(claims.find((c) => c.field_key === "signatory"));
+  const signatoryId = await ensureSignatory(db, { name: signatoryName, agencyId });
+  await applyEvidenceMetadata(db, evidenceId, claims, { agencyId, signatoryId });
+
+  if (entity && suppressed.length && row.publication_state === "published") {
+    const reviewId = await ensureReviewItem(db, {
+      type: "invalid_extracted_claim",
+      reason: `Malformed extracted ${suppressed.join(", ")} was suppressed and not shown as a published fact.`,
+      severity: "normal",
+      entityId: entity.entity_id,
+      evidenceId,
+      payload: { suppressed },
+    });
+    result.reviewItemIds.push(reviewId);
+  }
+
+  return result;
+}
+
+export async function sanitizeEvidenceBatch(
+  db: Sql,
+  limit = 8,
+): Promise<{
+  processed: number;
+  skipped: number;
+  suppressed: number;
+  remaining: number;
+  results: RepairEvidenceResult[];
+  entityIds: string[];
+}> {
+  const rows = await db.query<{ id: string }>(
+    `select e.id from evidence e
+     where not exists (
+       select 1 from extraction_runs r
+       where r.evidence_id = e.id and r.parser = $1 and r.success = 1
+     )
+     order by e.created_at asc
+     limit $2`,
+    [PARSER_SANITIZE, limit],
+  );
+  const results: RepairEvidenceResult[] = [];
+  const entityIds = new Set<string>();
+  let skipped = 0;
+  let suppressed = 0;
+  for (const row of rows) {
+    const out = await sanitizeOneEvidence(db, row.id);
+    results.push(out);
+    if (out.skipped) skipped += 1;
+    if (out.filled.length) suppressed += 1;
+    const links = await db.query<{ entity_id: string }>(
+      "select entity_id from evidence_entity_links where evidence_id = $1 and entity_id is not null",
+      [row.id],
+    );
+    for (const l of links) entityIds.add(l.entity_id);
+  }
+  const days = await getExpiringSoonDays(db);
+  for (const entityId of entityIds) {
+    await applyLifecycleForEntity(db, entityId, days);
+  }
+  return {
+    processed: rows.length,
+    skipped,
+    suppressed,
+    remaining: await remainingSanitizeCount(db),
+    results,
+    entityIds: [...entityIds],
+  };
 }
 
 export { classifyPublishedEvidence };

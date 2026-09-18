@@ -1,3 +1,4 @@
+import { isPlausibleEntityName, isPlausibleSignatory } from "./claim-quality.ts";
 import { addDaysIso, addMonthsIso, daysBetween, parseDate } from "./dates.ts";
 import { normalizeBeeLevel } from "./level.ts";
 import { normalizeName, normalizeRegistration } from "./normalize.ts";
@@ -379,7 +380,9 @@ export function extractDeterministically(text: string): ExtractionResult {
   const sig = text.match(/(?:technical\s+signatory|signed\s+by|signatory)[:\s]+([A-Za-z][A-Za-z .'\-]{2,60})/i);
   if (sig) {
     const name = sig[1]!.replace(/\s+/g, " ").trim();
-    claims.push(claim("signatory", name, normalizeName(name), sig[0], null, 0.6));
+    if (isPlausibleSignatory(name)) {
+      claims.push(claim("signatory", name, normalizeName(name), sig[0], null, 0.6));
+    }
   }
 
   const measured = text.match(
@@ -387,7 +390,7 @@ export function extractDeterministically(text: string): ExtractionResult {
   );
   if (measured) {
     const name = measured[1]!.replace(/\s+/g, " ").trim();
-    if (!/registration|level|scorecard/i.test(name)) {
+    if (isPlausibleEntityName(name).ok) {
       claims.push(claim("measured_entity", name, normalizeName(name), measured[0], null, 0.65));
       claims.push(claim("legal_entity_name", name, normalizeName(name), measured[0], null, 0.65));
     }

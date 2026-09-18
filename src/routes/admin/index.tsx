@@ -42,6 +42,7 @@ function Dashboard() {
         <Metric label="Historical / superseded" value={c.historical} />
         <Metric label="Expired" value={c.expired} />
         <Metric label="Expiring soon" value={c.expiring} />
+        <Metric label="Validity unconfirmed" value={c.unknownValidity} />
         <Metric label="Verification agencies" value={c.verifiers} />
         <Metric label="Review required" value={c.review} />
         <Metric label="Unresolved matches" value={c.matches} />

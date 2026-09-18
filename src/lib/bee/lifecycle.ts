@@ -1,5 +1,6 @@
 import { STATUS_EVIDENCE_TYPES, RECOGNIZED_DOCUMENT_TYPES } from "./constants.ts";
-import { compareIso, daysBetween, expiryStatus, toIsoDate } from "./dates.ts";
+import { canonicalFieldKey, isPublicClaimValue } from "./claim-quality.ts";
+import { compareIso, expiryStatus, toIsoDate } from "./dates.ts";
 
 export type LifecycleEvidence = {
   id: string;
@@ -13,7 +14,7 @@ export type LifecycleEvidence = {
 
 export type LifecycleDecision = {
   evidenceId: string;
-  lifecycle: "current" | "historical" | "superseded" | "expired" | "expiring_soon" | "disputed";
+  lifecycle: "current" | "historical" | "superseded" | "expired" | "expiring_soon" | "disputed" | "unknown_validity";
 };
 
 export type ClassifyResult = {
@@ -54,19 +55,16 @@ function isExpired(e: LifecycleEvidence, now: string): boolean {
   return Boolean(expiry && expiry < now);
 }
 
-/** Issue date is more than 13 months old and no expiry was extracted — do not keep CURRENT. */
-function tooOldWithoutExpiry(e: LifecycleEvidence, now: string): boolean {
-  if (toIsoDate(e.expiry_date)) return false;
-  const issue = toIsoDate(e.issue_date);
-  if (!issue) return false;
-  const gap = daysBetween(issue, now);
-  return gap != null && gap > 400;
+function hasPresentValidity(e: LifecycleEvidence, now: string): boolean {
+  const expiry = toIsoDate(e.expiry_date);
+  return Boolean(expiry && expiry >= now);
 }
 
 /**
  * Classify published evidence for a single legal entity.
- * Never looks at other entities. Status certificates compete for CURRENT;
- * older live certificates become superseded; expired certificates stay expired.
+ * Never looks at other entities. Status certificates compete for CURRENT
+ * only when present validity is positively established (explicit expiry that
+ * has not passed). Missing expiry is Validity unconfirmed, not Current.
  */
 export function classifyPublishedEvidence(
   rows: LifecycleEvidence[],
@@ -94,13 +92,17 @@ export function classifyPublishedEvidence(
 
   for (const row of published) {
     if (isExpired(row, now)) decisions.set(row.id, "expired");
-    else if (tooOldWithoutExpiry(row, now)) decisions.set(row.id, "historical");
+    else if (isStatus(row.evidence_type) && !hasPresentValidity(row, now)) {
+      decisions.set(row.id, "unknown_validity");
+    }
   }
 
-  const livePool = effectivePool.filter((r) => {
-    const state = decisions.get(r.id);
-    return state !== "expired" && state !== "historical";
-  }).sort(sortNewestFirst);
+  const livePool = effectivePool
+    .filter((r) => {
+      const state = decisions.get(r.id);
+      return state !== "expired" && state !== "unknown_validity";
+    })
+    .sort(sortNewestFirst);
   let currentEvidenceId: string | null = null;
   let disputed = false;
   let reason: string | null = null;
@@ -192,6 +194,8 @@ export function mergeRepairClaims(input: {
   lockedFields: Set<string>;
   entityReg?: string | null;
   evidencePublished?: boolean;
+  linkedName?: string | null;
+  linkedAliases?: string[];
 }): {
   claims: Array<{
     field_key: string;
@@ -269,8 +273,12 @@ export function mergeRepairClaims(input: {
       continue;
     }
 
-    const prevVal = prev ? working(prev) : null;
-    const incomingVal = incoming ? incoming.normalized_value ?? incoming.raw_value : null;
+    let prevVal = prev ? working(prev) : null;
+    let incomingVal = incoming ? incoming.normalized_value ?? incoming.raw_value : null;
+    const linked = { canonicalName: input.linkedName, aliases: input.linkedAliases };
+    const fieldKey = canonicalFieldKey(field);
+    if (prevVal && !isPublicClaimValue(fieldKey, prevVal, linked)) prevVal = null;
+    if (incomingVal && !isPublicClaimValue(fieldKey, incomingVal, linked)) incomingVal = null;
 
     if (field === "expiry_date" && prevVal && incomingVal && prevVal !== incomingVal) {
       const issueIncoming = extractedByField.get("issue_date");
@@ -398,7 +406,7 @@ export function mergeRepairClaims(input: {
       continue;
     }
 
-    if (prev) {
+    if (prev && prevVal) {
       claims.push({
         field_key: field,
         raw_value: prev.raw_value,

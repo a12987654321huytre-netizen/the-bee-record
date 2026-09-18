@@ -1,7 +1,8 @@
 import { createFileRoute, Link, useRouter, useRouteContext } from "@tanstack/react-router";
 import { Button, Select, Textarea } from "@/components/ui";
 import { addNoteFn, getAdminEvidence, relinkEvidenceFn, rerunExtractFn } from "@/lib/bee/admin.functions";
-import { formatWhen, shortId } from "@/lib/bee/format";
+import { formatWhen, publicStateLabel, shortId } from "@/lib/bee/format";
+import { CLAIM_FIELD_LABELS, type BeeField } from "@/lib/bee/constants";
 
 export const Route = createFileRoute("/admin/evidence/$id")({
   loader: ({ params }) => getAdminEvidence({ data: { id: params.id } }),
@@ -28,12 +29,22 @@ function EvidenceAdmin() {
           ) : null}
         </div>
         <dl className="grid grid-cols-2 gap-2 text-sm">
-          {["evidence_type", "lifecycle_state", "review_state", "publication_state", "extraction_state", "validation_state", "source_url", "source_domain", "content_hash", "issue_date", "expiry_date", "mime_type", "byte_size", "source_live_status"].map((k) => (
-            <div key={k} className="border-t border-rule py-2">
-              <dt className="text-xs uppercase text-muted">{k}</dt>
-              <dd className="break-all">{String(ev[k] ?? "—")}</dd>
-            </div>
-          ))}
+          {["evidence_type", "lifecycle_state", "review_state", "publication_state", "extraction_state", "validation_state", "source_url", "source_domain", "content_hash", "issue_date", "expiry_date", "mime_type", "byte_size", "source_live_status"].map((k) => {
+            const enumKey = ["evidence_type", "lifecycle_state", "review_state", "publication_state", "extraction_state", "validation_state", "source_live_status"].includes(k);
+            const raw = ev[k];
+            return (
+              <div key={k} className="border-t border-rule py-2">
+                <dt className="text-xs text-muted">{k.replace(/_/g, " ")}</dt>
+                <dd className="break-all">
+                  {raw == null || raw === ""
+                    ? "—"
+                    : enumKey
+                      ? publicStateLabel(String(raw))
+                      : String(raw)}
+                </dd>
+              </div>
+            );
+          })}
         </dl>
         <h2 className="font-display text-xl">Working claims</h2>
         <table className="w-full text-left text-sm">
@@ -48,7 +59,10 @@ function EvidenceAdmin() {
           <tbody>
             {data.claims.map((c) => (
               <tr key={c.id} className="border-t border-rule">
-                <td className="py-1 font-mono text-xs">{c.field_key}</td>
+                <td className="py-1">
+                  {CLAIM_FIELD_LABELS[c.field_key as BeeField] ?? c.field_key}
+                  <span className="ml-1 font-mono text-[10px] text-muted">{c.field_key}</span>
+                </td>
                 <td>{c.raw_value}</td>
                 <td>{c.edited_value ?? c.normalized_value}</td>
                 <td>{c.confidence ?? ""}</td>

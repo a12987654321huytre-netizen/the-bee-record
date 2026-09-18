@@ -58,6 +58,7 @@ function Directory() {
             <option value="">Any evidence state</option>
             <option value="current">Current</option>
             <option value="expiring_soon">Expiring soon</option>
+            <option value="unknown_validity">Validity unconfirmed</option>
             <option value="expired">Expired</option>
           </Select>
           <Button type="submit">Filter</Button>

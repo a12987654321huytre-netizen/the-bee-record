@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { PublicShell } from "@/components/public-shell";
 import { EmptyState, Field } from "@/components/ui";
 import { DateCell, EvidenceTypeLabel, LevelCell, LifecycleBadge } from "@/components/meta";
-import { displayOrUnknown, formatWhen } from "@/lib/bee/format";
+import { displayOrUnknown, formatWhen, publicStateLabel } from "@/lib/bee/format";
 import { CLAIM_FIELD_LABELS, type BeeField } from "@/lib/bee/constants";
 import { getCompanyPage } from "@/lib/bee/public.functions";
 
@@ -85,7 +85,7 @@ function CompanyPage() {
                     "Not recorded"
                   )}
                   {" · "}
-                  original source {supporting.source_live_status}
+                  original source {publicStateLabel(supporting.source_live_status, "unknown")}
                   {" · "}
                   {supporting.asset_id ? "archived copy retained" : "no archived copy"}
                 </p>

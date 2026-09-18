@@ -87,6 +87,7 @@ export const getDashboard = createServerFn({ method: "GET" }).handler(async () =
   const historical = await q("select count(*)::int as n from evidence where lifecycle_state in ('historical','superseded')");
   const expired = await q("select count(*)::int as n from evidence where lifecycle_state = 'expired'");
   const expiring = await q("select count(*)::int as n from evidence where lifecycle_state = 'expiring_soon'");
+  const unknownValidity = await q("select count(*)::int as n from evidence where lifecycle_state = 'unknown_validity'");
   const review = await q("select count(*)::int as n from review_items where status = 'pending'");
   const matches = await q("select count(*)::int as n from review_items where status = 'pending' and type = 'uncertain_entity_match'");
   const submissions = await q("select count(*)::int as n from submissions where status = 'pending'");
@@ -125,7 +126,7 @@ export const getDashboard = createServerFn({ method: "GET" }).handler(async () =
     "select id, type, reason, generated_at from review_items where status = 'pending' order by generated_at desc limit 10",
   );
   return {
-    counts: { tracked, visible, sources, evidence, current, historical, expired, expiring, review, matches, submissions, verifiers },
+    counts: { tracked, visible, sources, evidence, current, historical, expired, expiring, unknownValidity, review, matches, submissions, verifiers },
     period: period[0] ?? {
       sources_checked: 0,
       new_evidence: 0,

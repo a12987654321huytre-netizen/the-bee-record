@@ -1,12 +1,12 @@
 import { Link } from "@tanstack/react-router";
 import { LIFECYCLE_LABELS, EVIDENCE_TYPE_LABELS, type EvidenceType } from "@/lib/bee/constants";
-import { displayOrUnknown, formatLevel, formatWhen, lifecycleLabel } from "@/lib/bee/format";
+import { displayOrUnknown, formatEvidenceDate, formatLevel, lifecycleLabel } from "@/lib/bee/format";
 import { Status } from "./ui";
 
 export function lifecycleTone(state: string | null | undefined): "neutral" | "current" | "expired" | "warn" | "review" {
   if (state === "current") return "current";
   if (state === "expired" || state === "disputed") return "expired";
-  if (state === "expiring_soon" || state === "superseded") return "warn";
+  if (state === "expiring_soon" || state === "superseded" || state === "unknown_validity") return "warn";
   if (state === "discovered") return "review";
   return "neutral";
 }
@@ -23,8 +23,17 @@ export function LevelCell({ level }: { level: string | null | undefined }) {
   return <span className="font-medium tabular-nums">{formatLevel(level)}</span>;
 }
 
-export function DateCell({ value }: { value: string | Date | null | undefined }) {
-  return <span className="tabular-nums">{formatWhen(value)}</span>;
+export function DateCell({
+  value,
+  missing = "not_found",
+}: {
+  value: string | Date | null | undefined;
+  missing?: "unknown" | "not_disclosed" | "not_found";
+}) {
+  if (value == null || value === "") {
+    return <span className="text-muted">{displayOrUnknown(null, missing)}</span>;
+  }
+  return <span className="tabular-nums">{formatEvidenceDate(value)}</span>;
 }
 
 export function Unknown({ kind = "not_found" }: { kind?: "unknown" | "not_disclosed" | "not_found" }) {

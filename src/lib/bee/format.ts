@@ -1,4 +1,4 @@
-import { LIFECYCLE_LABELS, UNKNOWN_LABELS } from "./constants.ts";
+import { LIFECYCLE_LABELS, PUBLIC_STATE_LABELS, UNKNOWN_LABELS, EVIDENCE_TYPE_LABELS, type EvidenceType } from "./constants.ts";
 import { formatDisplayDate } from "./dates.ts";
 import { displayBeeLevel } from "./level.ts";
 
@@ -14,9 +14,23 @@ export function displayOrUnknown(
   return v ? v : unknown(kind);
 }
 
+export function publicStateLabel(value: string | null | undefined, missing: keyof typeof UNKNOWN_LABELS = "not_found"): string {
+  const v = value?.trim();
+  if (!v) return unknown(missing);
+  if (LIFECYCLE_LABELS[v]) return LIFECYCLE_LABELS[v];
+  if (PUBLIC_STATE_LABELS[v]) return PUBLIC_STATE_LABELS[v];
+  if (EVIDENCE_TYPE_LABELS[v as EvidenceType]) return EVIDENCE_TYPE_LABELS[v as EvidenceType];
+  if (!/[_\-]/.test(v)) return v;
+  return v
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 export function lifecycleLabel(state: string | null | undefined): string {
   if (!state) return unknown("unknown");
-  return LIFECYCLE_LABELS[state] ?? state;
+  return LIFECYCLE_LABELS[state] ?? publicStateLabel(state, "unknown");
 }
 
 export function formatLevel(level: string | null | undefined): string {
@@ -28,6 +42,20 @@ export function formatWhen(iso: string | Date | null | undefined): string {
   const s = iso instanceof Date ? iso.toISOString() : String(iso);
   if (s.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(s)) return formatDisplayDate(s.slice(0, 10));
   return s;
+}
+
+export function formatEvidenceDate(iso: string | Date | null | undefined): string {
+  if (iso == null || iso === "") return unknown("not_found");
+  return formatWhen(iso);
+}
+
+export function formatScorecard(value: string | null | undefined): string {
+  const v = value?.trim();
+  if (!v) return unknown("not_found");
+  if (/^(generic|qse|eme|specialised|specialized)$/i.test(v)) {
+    return v.toLowerCase() === "eme" || v.toLowerCase() === "qse" ? v.toUpperCase() : v.charAt(0).toUpperCase() + v.slice(1).toLowerCase();
+  }
+  return v;
 }
 
 export function shortId(id: string): string {

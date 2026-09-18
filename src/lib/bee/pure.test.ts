@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { parseDate, expiryStatus } from "./dates.ts";
 import { parseExtractionJson, parseExtractionText } from "./extraction-schema.ts";
 import { extractDeterministically } from "./deterministic-extract.ts";
+import { canonicalFieldKey, isPlausibleEntityName, publicLocator } from "./claim-quality.ts";
 import { classifyPublishedEvidence, mergeRepairClaims } from "./lifecycle.ts";
 import { normalizeBeeLevel } from "./level.ts";
 import { normalizeName, normalizeRegistration, isOfficialDomain } from "./normalize.ts";
@@ -30,6 +31,7 @@ describe("dates", () => {
   it("computes expiry without deleting", () => {
     assert.equal(expiryStatus("2020-01-01", "current", 90, "2026-01-01"), "expired");
     assert.equal(expiryStatus("2026-02-01", "current", 90, "2026-01-01"), "expiring_soon");
+    assert.equal(expiryStatus(null, "current", 90, "2026-01-01"), "unknown_validity");
   });
   it("formats Date objects from the driver as calendar dates", () => {
     assert.equal(formatWhen(new Date("2026-09-18T12:00:00.000Z")), "18 September 2026");
@@ -182,6 +184,17 @@ describe("deterministic extractor", () => {
     assert.equal(result.claims.find((c) => c.field === "bee_level")?.normalized_value, "1");
   });
 
+  it("does not publish certificate prose as the measured entity", () => {
+    const result = extractDeterministically(`
+      B-BBEE Certificate
+      Measured Entity: measured against the Codes of Good Practice on Broad Based Black
+      Issue date: 21 August 2025
+      Expiry date: 20 August 2026
+    `);
+    assert.equal(result.claims.find((c) => c.field === "measured_entity"), undefined);
+    assert.equal(result.claims.find((c) => c.field === "legal_entity_name"), undefined);
+  });
+
   it("pairs issue and expiry when a measurement-period date sits in the same window", () => {
     const result = extractDeterministically(`
       EmpowerLogic (Pty) Ltd
@@ -275,7 +288,26 @@ describe("lifecycle classification", () => {
       "2026-09-18",
       90,
     );
-    assert.equal(result.decisions[0]?.lifecycle, "historical");
+    assert.equal(result.decisions[0]?.lifecycle, "unknown_validity");
+    assert.equal(result.currentEvidenceId, null);
+  });
+
+  it("does not mark a certificate current when expiry was never extracted", () => {
+    const result = classifyPublishedEvidence(
+      [
+        {
+          id: "evd_recent",
+          evidence_type: "bee_certificate",
+          issue_date: "2026-08-01",
+          expiry_date: null,
+          discovered_at: "2026-08-02",
+          publication_state: "published",
+        },
+      ],
+      "2026-09-18",
+      90,
+    );
+    assert.equal(result.decisions[0]?.lifecycle, "unknown_validity");
     assert.equal(result.currentEvidenceId, null);
   });
 
@@ -438,6 +470,65 @@ describe("repair claim merge", () => {
     });
     const expiry = out.claims.find((c) => c.field_key === "expiry_date");
     assert.equal(expiry?.normalized_value, "2026-11-06");
+  });
+
+  it("drops certificate prose used as a legal entity name", () => {
+    const out = mergeRepairClaims({
+      previous: [
+        {
+          field_key: "legal_entity_name",
+          raw_value: "measured against codes of good practice on broad based black",
+          normalized_value: "measured against codes of good practice on broad based black",
+          edited_value: null,
+          confidence: 0.5,
+          source_snippet: "measured entity measured against the Codes of Good Practice",
+          parser: "repair/v1",
+          section: null,
+          edited_by: null,
+          edited_at: null,
+          published_state: "published",
+          review_state: "approved",
+        },
+      ],
+      extracted: [
+        {
+          field: "legal_entity_name",
+          raw_value: "Clover (Pty) Ltd",
+          normalized_value: normalizeName("Clover (Pty) Ltd"),
+          confidence: 0.8,
+          page: null,
+          locator: "Measured Entity: Clover (Pty) Ltd",
+          warning: null,
+        },
+      ],
+      lockedFields: new Set(),
+      evidencePublished: true,
+      linkedName: "Clover (Pty) Ltd",
+    });
+    assert.equal(out.claims.find((c) => c.field_key === "legal_entity_name")?.normalized_value, normalizeName("Clover (Pty) Ltd"));
+  });
+});
+
+describe("claim quality", () => {
+  it("rejects sentence fragments as entity names", () => {
+    assert.equal(
+      isPlausibleEntityName("measured against codes of good practice on broad based black", {
+        canonicalName: "Clover (Pty) Ltd",
+      }).ok,
+      false,
+    );
+    assert.equal(isPlausibleEntityName("and is an").ok, false);
+    assert.equal(isPlausibleEntityName("Clover (Pty) Ltd", { canonicalName: "Clover (Pty) Ltd" }).ok, true);
+  });
+  it("normalises claim-type aliases", () => {
+    assert.equal(canonicalFieldKey("bbbee_level"), "bee_level");
+    assert.equal(canonicalFieldKey("verifier"), "verification_agency");
+    assert.equal(canonicalFieldKey("sector_code"), "scorecard_type");
+  });
+  it("omits junk locators", () => {
+    assert.equal(publicLocator("measured entity measured against the Codes of Good Practice on Broad Based Black"), null);
+    assert.equal(publicLocator("Page 1"), "Page 1");
+    assert.equal(publicLocator("Measured entity field"), "Measured entity field");
   });
 });
 

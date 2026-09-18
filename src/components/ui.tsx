@@ -81,7 +81,7 @@ export function Status({
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-sm border px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wide",
+        "inline-flex items-center rounded-sm border px-1.5 py-0.5 text-[11px] font-medium",
         tones[tone],
       )}
     >
@@ -110,7 +110,7 @@ export function Field({
 }) {
   return (
     <div className="border-t border-rule py-3">
-      <dt className="text-xs font-medium uppercase tracking-wide text-muted">{label}</dt>
+      <dt className="text-sm text-muted">{label}</dt>
       <dd className="mt-1 text-sm text-ink">{value}</dd>
       {hint ? <p className="mt-1 text-xs text-muted">{hint}</p> : null}
     </div>

@@ -197,7 +197,10 @@ export function expiryStatus(
   now = todayIso(),
 ): string {
   const expiry = toIsoDate(expiryDate);
-  if (!expiry) return lifecycle;
+  if (!expiry) {
+    if (lifecycle === "current" || lifecycle === "expiring_soon") return "unknown_validity";
+    return lifecycle;
+  }
   if (expiry < now) return "expired";
   if (lifecycle === "current" || lifecycle === "expiring_soon") {
     const limit = addDaysIso(now, expiringSoonDays);

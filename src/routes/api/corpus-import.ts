@@ -14,6 +14,7 @@ import {
   resetEqualDateRepairRuns,
   resetRepairRuns,
   cleanupGarbageAgencies,
+  sanitizeEvidenceBatch,
 } from "@/lib/bee/repair.server";
 import { sql } from "@/lib/bee/sql.server";
 
@@ -51,7 +52,7 @@ const bodySchema = z.object({
   crawlLimit: z.number().int().min(1).max(8).optional(),
   retryLimit: z.number().int().min(1).max(12).optional(),
   repairLimit: z.number().int().min(1).max(12).optional(),
-  phase: z.enum(["extract", "lifecycle", "reset", "cleanup"]).optional(),
+  phase: z.enum(["extract", "lifecycle", "reset", "cleanup", "sanitize"]).optional(),
   afterId: z.string().nullable().optional(),
   sourceId: z.string().optional(),
 });
@@ -106,6 +107,27 @@ export const Route = createFileRoute("/api/corpus-import")({
               afterId: parsed.data.afterId ?? null,
             });
             return Response.json({ ...(await stats(db)), phase, ...out });
+          }
+          if (phase === "sanitize") {
+            const out = await sanitizeEvidenceBatch(db, parsed.data.repairLimit ?? 6);
+            return Response.json({
+              ...(await stats(db)),
+              phase,
+              processed: out.processed,
+              skipped: out.skipped,
+              suppressed: out.suppressed,
+              remaining: out.remaining,
+              remainingSanitize: out.remaining,
+              entityIds: out.entityIds,
+              results: out.results.map((r) => ({
+                evidenceId: r.evidenceId,
+                skipped: r.skipped,
+                parsed: r.parsed,
+                suppressed: r.filled,
+                fetchFallback: r.fetchFallback,
+                error: r.error,
+              })),
+            });
           }
           const out = await repairEvidenceBatch(db, parsed.data.repairLimit ?? 3);
           return Response.json({

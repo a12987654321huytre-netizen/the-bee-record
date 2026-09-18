@@ -3,6 +3,7 @@ import { workingClaims, workingValue } from "./claims.server.ts";
 import { RECOGNIZED_DOCUMENT_TYPES } from "./constants.ts";
 import { compareIso, expiryStatus, todayIso, toIsoDate } from "./dates.ts";
 import { newId } from "./ids.ts";
+import { canonicalFieldKey, isPublicClaimValue } from "./claim-quality.ts";
 import { classifyPublishedEvidence, type LifecycleEvidence } from "./lifecycle.ts";
 import { normalizeRegistration } from "./normalize.ts";
 import type { Sql } from "./db-types.ts";
@@ -34,8 +35,11 @@ export async function lockedFields(db: Sql, entityId: string): Promise<Map<strin
 function presentFields(claims: ExtractedClaim[]): Map<string, string> {
   const map = new Map<string, string>();
   for (const claim of claims) {
+    const field = canonicalFieldKey(claim.field_key);
     const value = workingValue(claim);
-    if (value) map.set(claim.field_key, value);
+    if (!value) continue;
+    if (!isPublicClaimValue(field, value)) continue;
+    map.set(field, value);
   }
   return map;
 }
@@ -233,13 +237,16 @@ export async function applyLifecycleForEntity(
 
   const supporting = evidence.find((e) => e.id === supportingId) ?? null;
   const supportingLife = classified.decisions.find((d) => d.evidenceId === supportingId)?.lifecycle ?? null;
+  const unknownValidity = classified.decisions.some((d) => d.lifecycle === "unknown_validity");
   const entityLife = classified.disputed
     ? "disputed"
     : classified.currentEvidenceId
       ? (classified.decisions.find((d) => d.evidenceId === classified.currentEvidenceId)?.lifecycle ?? "current")
-      : supportingLife === "expired" || !supportingId
-        ? "expired"
-        : supportingLife;
+      : unknownValidity
+        ? "unknown_validity"
+        : supportingLife === "expired" || !supportingId
+          ? "expired"
+          : supportingLife;
 
   const publishedAt =
     existingClaims.find((c) => c.evidence_id === supportingId)?.published_at ??

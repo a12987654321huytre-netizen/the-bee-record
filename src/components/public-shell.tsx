@@ -36,9 +36,6 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
                 {item.label}
               </Link>
             ))}
-            <Link to="/admin" className="text-muted hover:text-ink">
-              Admin
-            </Link>
           </nav>
         </div>
       </header>

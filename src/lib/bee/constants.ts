@@ -11,6 +11,7 @@ export const EXTRACTION_SCHEMA_VERSION = "extract-v1";
 export const PARSER_DETERMINISTIC = "deterministic/v1";
 export const PARSER_AI = "xai/grok-4.5";
 export const PARSER_REPAIR = "repair/v1";
+export const PARSER_SANITIZE = "repair/v2-claims";
 export const DEFAULT_CRAWLER_UA =
   "BEERecordBot/1.0 (public B-BBEE evidence index; research bot)";
 
@@ -71,6 +72,7 @@ export const REVIEW_TYPES = [
   "relationship_claim",
   "consultant_relationship",
   "extraction_failed",
+  "invalid_extracted_claim",
 ] as const;
 
 export type ReviewType = (typeof REVIEW_TYPES)[number];
@@ -131,6 +133,7 @@ export const LIFECYCLE_LABELS: Record<string, string> = {
   expired: "Expired",
   expiring_soon: "Expiring soon",
   disputed: "Disputed",
+  unknown_validity: "Validity unconfirmed",
 };
 
 export const UNKNOWN_LABELS = {
@@ -138,3 +141,30 @@ export const UNKNOWN_LABELS = {
   not_disclosed: "Not disclosed",
   not_found: "Not found in published evidence",
 } as const;
+
+export const PUBLIC_STATE_LABELS: Record<string, string> = {
+  approved: "Approved",
+  published: "Published",
+  unpublished: "Unpublished",
+  pending: "Pending",
+  rejected: "Rejected",
+  edited: "Edited",
+  under_review: "Under review",
+  in_review: "In review",
+  live: "Live",
+  dead: "Unreachable",
+  unreachable: "Unreachable",
+  unknown: "Unknown",
+  discovered: "Discovered",
+  current: "Current",
+  historical: "Historical",
+  superseded: "Superseded",
+  expired: "Expired",
+  expiring_soon: "Expiring soon",
+  disputed: "Disputed",
+  unknown_validity: "Validity unconfirmed",
+  conflicting_evidence: "Conflicting evidence",
+  retained: "Retained (not published as a public file URL)",
+  not_stored: "Not stored",
+};
+
