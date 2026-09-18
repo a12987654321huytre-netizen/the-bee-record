@@ -11,7 +11,7 @@ export const EXTRACTION_SCHEMA_VERSION = "extract-v1";
 export const PARSER_DETERMINISTIC = "deterministic/v1";
 export const PARSER_AI = "xai/grok-4.5";
 export const PARSER_REPAIR = "repair/v1";
-export const PARSER_SANITIZE = "repair/v2-claims";
+export const PARSER_SANITIZE = "repair/v3-claims";
 export const DEFAULT_CRAWLER_UA =
   "BEERecordBot/1.0 (public B-BBEE evidence index; research bot)";
 

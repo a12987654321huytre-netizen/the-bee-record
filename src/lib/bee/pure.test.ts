@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { parseDate, expiryStatus } from "./dates.ts";
 import { parseExtractionJson, parseExtractionText } from "./extraction-schema.ts";
 import { extractDeterministically } from "./deterministic-extract.ts";
-import { canonicalFieldKey, isPlausibleEntityName, publicLocator } from "./claim-quality.ts";
+import { canonicalFieldKey, isPlausibleEntityName, isPlausibleSignatory, publicLocator } from "./claim-quality.ts";
 import { classifyPublishedEvidence, mergeRepairClaims } from "./lifecycle.ts";
 import { normalizeBeeLevel } from "./level.ts";
 import { normalizeName, normalizeRegistration, isOfficialDomain } from "./normalize.ts";
@@ -548,6 +548,10 @@ describe("claim quality", () => {
     assert.equal(publicLocator("measured entity measured against the Codes of Good Practice on Broad Based Black"), null);
     assert.equal(publicLocator("Page 1"), "Page 1");
     assert.equal(publicLocator("Measured entity field"), "Measured entity field");
+  });
+  it("rejects signatories that swallowed a field label", () => {
+    assert.equal(isPlausibleSignatory("jeanet mahlalela certificate number"), false);
+    assert.equal(isPlausibleSignatory("Jeanet Mahlalela"), true);
   });
 });
 

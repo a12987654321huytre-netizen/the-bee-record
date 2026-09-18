@@ -112,6 +112,9 @@ export function isPlausibleSignatory(raw: string | null | undefined): boolean {
   if (name.length < 4 || name.length > 60) return false;
   if (CERTIFICATE_PROSE.test(name)) return false;
   if (/^(per|as|date|expiry|signatory|technical|yes|no)\b/i.test(name)) return false;
+  if (/\b(certificate number|registration number|unique reference|scorecard|b-?bbee|issue date|expiry date|technical signatory)\b/i.test(name)) {
+    return false;
+  }
   const words = name.split(/\s+/);
   if (words.length < 2 || words.length > 5) return false;
   return /^[A-Za-z][A-Za-z .'\-]+$/.test(name);
