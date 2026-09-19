@@ -254,7 +254,7 @@ export async function auditEnrichment(db: Sql) {
   const reviewBreakdown = await db.query<{ type: string; n: number }>(
     `select type, count(*)::int as n from review_items where status = 'pending' group by type order by n desc`,
   );
-  const reviewSamples = await db.query<{
+  const reviewSamples: Array<{
     id: string;
     type: string;
     reason: string;
@@ -263,16 +263,30 @@ export async function auditEnrichment(db: Sql) {
     publication_state: string | null;
     evidence_type: string | null;
     visibility: string | null;
-  }>(
-    `select r.id, r.type, r.reason, ent.canonical_name as entity_name, e.title as evidence_title,
-            e.publication_state, e.evidence_type, ent.visibility
-     from review_items r
-     left join evidence e on e.id = r.evidence_id
-     left join entities ent on ent.id = r.entity_id
-     where r.status = 'pending'
-     order by r.type, r.generated_at desc
-     limit 80`,
-  );
+  }> = [];
+  for (const row of reviewBreakdown) {
+    const samples = await db.query<{
+      id: string;
+      type: string;
+      reason: string;
+      entity_name: string | null;
+      evidence_title: string | null;
+      publication_state: string | null;
+      evidence_type: string | null;
+      visibility: string | null;
+    }>(
+      `select r.id, r.type, r.reason, ent.canonical_name as entity_name, e.title as evidence_title,
+              e.publication_state, e.evidence_type, ent.visibility
+       from review_items r
+       left join evidence e on e.id = r.evidence_id
+       left join entities ent on ent.id = r.entity_id
+       where r.status = 'pending' and r.type = $1
+       order by r.generated_at desc
+       limit 8`,
+      [row.type],
+    );
+    reviewSamples.push(...samples);
+  }
   const duplicateNameGroups = await db.query<{ normalized_name: string; n: number; names: string }>(
     `select normalized_name, count(*)::int as n,
             string_agg(canonical_name, ' | ' order by canonical_name) as names
@@ -402,6 +416,71 @@ export async function closeSucceededExtractionReviews(
     }
   }
   return { closed: opts?.dryRun ? 0 : rows.length };
+}
+
+export async function closeSuppressedClaimReviews(
+  db: Sql,
+  opts?: { limit?: number; dryRun?: boolean },
+): Promise<{ closed: number; samples: Array<{ id: string; reason: string }> }> {
+  const limit = Math.min(200, opts?.limit ?? 120);
+  const rows = await db.query<{ id: string; reason: string }>(
+    `select id, reason from review_items
+     where status = 'pending'
+       and type = 'invalid_extracted_claim'
+       and reason ilike '%suppressed and not shown%'
+     order by generated_at
+     limit $1`,
+    [limit],
+  );
+  if (!opts?.dryRun) {
+    for (const row of rows) {
+      await closeReview(db, {
+        reviewItemId: row.id,
+        actorId: ACTOR,
+        status: "approved",
+        resolution: "Malformed extracted claim was already suppressed and not published.",
+      });
+    }
+  }
+  return { closed: opts?.dryRun ? 0 : rows.length, samples: rows.slice(0, 15) };
+}
+
+export async function closeRepairKeptConflicts(
+  db: Sql,
+  opts?: { limit?: number; dryRun?: boolean },
+): Promise<{ closed: number; skippedLevel: number; samples: Array<{ id: string; reason: string }> }> {
+  const limit = Math.min(200, opts?.limit ?? 80);
+  const rows = await db.query<{ id: string; reason: string }>(
+    `select id, reason from review_items
+     where status = 'pending'
+       and type = 'conflicting_evidence'
+       and reason ilike 'Repair extracted a different%'
+       and reason ilike '%Stored value was kept%'
+     order by generated_at
+     limit $1`,
+    [limit],
+  );
+  let closed = 0;
+  let skippedLevel = 0;
+  const samples: Array<{ id: string; reason: string }> = [];
+  for (const row of rows) {
+    if (/bee_level|b-bbee level/i.test(row.reason)) {
+      skippedLevel += 1;
+      continue;
+    }
+    if (samples.length < 15) samples.push(row);
+    if (!opts?.dryRun) {
+      await closeReview(db, {
+        reviewItemId: row.id,
+        actorId: ACTOR,
+        status: "approved",
+        resolution:
+          "Repair already kept the stored claim; the incoming extract was not applied. Leftover conflict review closed.",
+      });
+    }
+    closed += 1;
+  }
+  return { closed: opts?.dryRun ? 0 : closed, skippedLevel, samples };
 }
 
 export async function rejectJunkReviews(

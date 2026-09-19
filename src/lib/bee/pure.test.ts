@@ -59,6 +59,7 @@ describe("normalization", () => {
   it("accepts CIPC registration numbers and rejects CSD-style values", () => {
     assert.equal(isZaCompanyRegistration("1986/003934/06"), true);
     assert.equal(formatZaRegistration("198600393406"), "1986/003934/06");
+    assert.equal(isZaCompanyRegistration("1991/005476/30"), true);
     assert.equal(isZaCompanyRegistration("MAAA0123456"), false);
     assert.equal(isZaCompanyRegistration("123"), false);
   });

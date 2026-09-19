@@ -24,6 +24,8 @@ import {
   auditEnrichment,
   closeStalePublishedReviews,
   closeSucceededExtractionReviews,
+  closeSuppressedClaimReviews,
+  closeRepairKeptConflicts,
   copyRegistrationFromCertificateClaims,
   ensureCompanyWebsiteSources,
   ensureExtraSectors,
@@ -94,6 +96,8 @@ const bodySchema = z.object({
       "unpublish",
       "close-stale-reviews",
       "close-extraction",
+      "close-suppressed",
+      "close-repair-conflicts",
       "copy-regs",
       "merge-dupes",
       "identity",
@@ -150,6 +154,14 @@ export const Route = createFileRoute("/api/corpus-import")({
             }
             if (phase === "close-extraction") {
               const out = await closeSucceededExtractionReviews(db, { limit, dryRun });
+              return Response.json({ ...(await stats(db)), phase, ...out });
+            }
+            if (phase === "close-suppressed") {
+              const out = await closeSuppressedClaimReviews(db, { limit, dryRun });
+              return Response.json({ ...(await stats(db)), phase, ...out });
+            }
+            if (phase === "close-repair-conflicts") {
+              const out = await closeRepairKeptConflicts(db, { limit, dryRun });
               return Response.json({ ...(await stats(db)), phase, ...out });
             }
             if (phase === "reject-junk") {

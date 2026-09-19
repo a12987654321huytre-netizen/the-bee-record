@@ -14,6 +14,7 @@ export const ZA_ENTITY_TYPES = new Set([
   "24",
   "25",
   "26",
+  "30",
 ]);
 
 /** CIPC-style YYYYNNNNNNTT after punctuation is stripped. */
