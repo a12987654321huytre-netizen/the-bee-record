@@ -15,6 +15,7 @@ import { applyPasswordChange } from "./admin-password.server.ts";
 import { hashPassword, verifyPassword } from "./passwords.ts";
 import { applyLifecycleForEntity } from "./publication.server.ts";
 import { repairOneEvidence, ensureUnknownValidityConstraint } from "./repair.server.ts";
+import { importCorpusItem } from "./corpus-import.server.ts";
 
 delete process.env.XAI_API_KEY;
 
@@ -248,6 +249,61 @@ describe("end-to-end evidence pipeline", () => {
     assert.ok((autoAudit[0]?.n ?? 0) >= 1);
     const pub = (await db.query<{ rule_version: string | null }>("select rule_version from published_claims where entity_id = $1 and field_key = 'bee_level'", [a.id]))[0];
     assert.ok(pub?.rule_version);
+  });
+});
+
+describe("official procurement disclosure import", () => {
+  it("publishes a company without treating the disclosure as a current certificate", async () => {
+    const { db } = await memoryDb();
+    const out = await importCorpusItem(db, {
+      canonicalName: "XSCANN TECHNOLOGIES (PTY) LTD",
+      publishIfSafe: true,
+      procurement: [
+        {
+          sourceUrl: "https://www.justice.gov.za/cfo_tender/tenders-awarded.html",
+          governmentInstitution: "Department of Justice and Constitutional Development",
+          tenderNumber: "RFB 09 2025",
+          tenderDescription: "Supply of X-Ray machines",
+          awardDate: "2026-05-05",
+          beeLevel: "Level 1",
+          enterpriseClass: "EME",
+          outcome: "awarded",
+        },
+      ],
+    });
+    assert.equal(out.created, true);
+    assert.equal(out.published, true);
+    assert.equal(out.evidence[0]?.published, true);
+    const ev = (
+      await db.query<{ evidence_type: string; lifecycle_state: string; expiry_date: string | null; verifier_agency_id: string | null }>(
+        "select evidence_type, lifecycle_state, expiry_date, verifier_agency_id from evidence where id = $1",
+        [out.evidence[0]!.evidenceId],
+      )
+    )[0];
+    assert.equal(ev?.evidence_type, "government_procurement_disclosure");
+    assert.equal(ev?.lifecycle_state, "historical");
+    assert.equal(ev?.expiry_date, null);
+    assert.equal(ev?.verifier_agency_id, null);
+    const vis = (await db.query<{ visibility: string; slug: string }>("select visibility, slug from entities where id = $1", [out.entityId]))[0];
+    assert.equal(vis?.visibility, "public");
+    const page = await getPublicEntity(db, vis!.slug);
+    assert.ok(page?.entity);
+    assert.equal(page?.current?.bee_level ?? null, null);
+    assert.equal(page?.current?.lifecycle_state ?? null, null);
+    assert.equal(page?.evidence[0]?.evidence_type, "government_procurement_disclosure");
+
+    const jv = await importCorpusItem(db, {
+      canonicalName: "ABC Civils / XYZ Plant JV",
+      procurement: [
+        {
+          sourceUrl: "https://www.justice.gov.za/cfo_tender/tenders-awarded.html",
+          governmentInstitution: "Department of Justice and Constitutional Development",
+          beeLevel: "1",
+        },
+      ],
+    });
+    assert.equal(jv.skipped, true);
+    assert.equal(jv.entityId, null);
   });
 });
 

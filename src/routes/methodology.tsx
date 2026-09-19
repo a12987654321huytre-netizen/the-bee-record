@@ -16,9 +16,15 @@ function Methodology() {
           absence does not prove compliance, non-compliance, ownership, or control beyond what the cited document says.
         </p>
         <Section title="Public evidence model">
-          Every published fact is attached to a document: a certificate, affidavit, annual report, disclosure page or other
-          checkable public source. The current company view is an interpretation of approved evidence, not a row that
-          overwrites history.
+          Every published fact is attached to a checkable public source: a certificate, affidavit, annual report, company
+          disclosure, or official government procurement record. The current company view is an interpretation of approved
+          evidence, not a row that overwrites history.
+        </Section>
+        <Section title="Current certificates versus dated disclosures">
+          A company may be published when we hold credible dated evidence of its B-BBEE status even if we do not hold a
+          live verification certificate. Official procurement tables, bidder registers and award notices are indexed as
+          official dated disclosures. They report the level the government source recorded for that tender. They are never
+          labelled as a current certificate, and we do not invent an expiry date, verifier or certificate number.
         </Section>
         <Section title="Evidence preservation">
           Documents are hashed. Identical bytes are not stored twice. A newer certificate does not erase an older one.

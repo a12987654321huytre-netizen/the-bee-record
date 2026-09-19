@@ -2,11 +2,23 @@ import { timingSafeEqual } from "node:crypto";
 import { addAlias, createEntity, createRelationship, setClassification } from "./entities.server.ts";
 import { sha256HexNode } from "./hash.ts";
 import { ingestDocument, rerunExtraction } from "./pipeline.server.ts";
+import { persistExtraction } from "./extract.server.ts";
 import { createSource } from "./crawler.server.ts";
 import { getExpiringSoonDays } from "./settings.server.ts";
 import { publishEvidence } from "./publication.server.ts";
-import { normalizeName, normalizeRegistration } from "./normalize.ts";
+import { extractDomain, normalizeName, normalizeRegistration } from "./normalize.ts";
+import { newId } from "./ids.ts";
+import { normalizeBeeLevel } from "./level.ts";
+import { PARSER_PROCUREMENT } from "./constants.ts";
+import { checkFetchUrl } from "./ssrf.ts";
+import {
+  cleanSupplierName,
+  isJointVentureName,
+  isMalformedCompanyName,
+  procurementIdentityHash,
+} from "./disclosure.ts";
 import type { Sql } from "./db-types.ts";
+import type { ExtractionClaim } from "./types.ts";
 
 /** SHA-256 of the one-time corpus import bearer. Token is not in git. */
 export const CORPUS_IMPORT_TOKEN_SHA256 =
@@ -26,6 +38,20 @@ export type CorpusSource = {
   frequency?: "daily" | "weekly" | "monthly" | "manual";
 };
 
+export type ProcurementDisclosureInput = {
+  sourceUrl: string;
+  governmentInstitution: string;
+  tenderNumber?: string;
+  tenderDescription?: string;
+  awardDate?: string;
+  beeLevel?: string;
+  enterpriseClass?: string;
+  contractPeriod?: string;
+  contractAmount?: string;
+  sourceTitle?: string;
+  outcome?: "awarded" | "responded" | "unsuccessful" | "bidder_register";
+};
+
 export type CorpusItem = {
   canonicalName: string;
   legalName?: string;
@@ -39,6 +65,7 @@ export type CorpusItem = {
   entityType?: string;
   evidence?: CorpusEvidence[];
   sources?: CorpusSource[];
+  procurement?: ProcurementDisclosureInput[];
   publishIfSafe?: boolean;
 };
 
@@ -48,6 +75,8 @@ export type ImportItemResult = {
   created: boolean;
   duplicateEntity: boolean;
   published: boolean;
+  skipped?: boolean;
+  skipReason?: string;
   evidence: Array<{
     url: string;
     evidenceId?: string;
@@ -57,6 +86,7 @@ export type ImportItemResult = {
     reviewItemId?: string | null;
     error?: string;
     retried?: boolean;
+    kind?: string;
   }>;
   sources: Array<{ url: string; sourceId?: string; error?: string }>;
   error?: string;
@@ -114,6 +144,220 @@ async function findExistingEntity(
 async function findParentId(db: Sql, parentName: string): Promise<string | null> {
   const found = await findExistingEntity(db, { canonicalName: parentName });
   return found?.id ?? null;
+}
+
+function claim(
+  field: string,
+  raw: string | null | undefined,
+  normalized?: string | null,
+  locator?: string | null,
+): ExtractionClaim | null {
+  const value = raw?.trim();
+  if (!value) return null;
+  return {
+    field: field as ExtractionClaim["field"],
+    raw_value: value,
+    normalized_value: normalized ?? value,
+    confidence: 0.99,
+    page: null,
+    locator: locator ?? null,
+    warning: null,
+  };
+}
+
+function procurementTitle(input: {
+  name: string;
+  institution: string;
+  tenderNumber?: string | null;
+  beeLevel?: string | null;
+}): string {
+  const level = input.beeLevel ? `Level ${input.beeLevel} reported` : "B-BBEE level as reported";
+  const tender = input.tenderNumber ? ` ${input.tenderNumber}` : "";
+  return `${input.name} — ${level} in ${input.institution}${tender}`;
+}
+
+function procurementNotes(input: ProcurementDisclosureInput): string {
+  const outcome =
+    input.outcome === "unsuccessful"
+      ? "The named bidder was recorded in an official evaluation/result table; award is not implied."
+      : input.outcome === "responded"
+        ? "The named bidder was recorded as having responded to this procurement."
+        : "The named supplier was recorded in an official awarded-tender or bidder-result publication.";
+  return [
+    "Official government procurement disclosure.",
+    "The B-BBEE level is exactly as reported in the source for this dated procurement.",
+    "This is not a current verification certificate.",
+    "No certificate number, expiry date or verification agency is inferred.",
+    outcome,
+  ].join(" ");
+}
+
+async function importProcurementDisclosure(
+  db: Sql,
+  input: {
+    entityId: string;
+    canonicalName: string;
+    disclosure: ProcurementDisclosureInput;
+    publish: boolean;
+    expiringSoonDays: number;
+  },
+): Promise<ImportItemResult["evidence"][number]> {
+  const d = input.disclosure;
+  const urlCheck = checkFetchUrl(d.sourceUrl);
+  if (!urlCheck.ok) {
+    return { url: d.sourceUrl, kind: "procurement", error: urlCheck.reason };
+  }
+  const sourceUrl = urlCheck.url.toString();
+  const beeLevel = normalizeBeeLevel(d.beeLevel ?? null);
+  const evidenceDate = d.awardDate && /^\d{4}-\d{2}-\d{2}$/.test(d.awardDate) ? d.awardDate : null;
+  const hash = procurementIdentityHash({
+    sourceUrl,
+    tenderNumber: d.tenderNumber,
+    canonicalName: input.canonicalName,
+    beeLevel: beeLevel ?? d.beeLevel ?? null,
+    evidenceDate,
+  });
+  const existing = await db.query<{ id: string; publication_state: string }>(
+    "select id, publication_state from evidence where content_hash = $1 limit 1",
+    [hash],
+  );
+  if (existing[0]) {
+    const links = await db.query<{ entity_id: string }>(
+      "select entity_id from evidence_entity_links where evidence_id = $1",
+      [existing[0].id],
+    );
+    if (!links.some((l) => l.entity_id === input.entityId)) {
+      const id = newId("lnk");
+      await db.query(
+        `insert into evidence_entity_links
+          (id, evidence_id, entity_id, link_state, extracted_name, match_method, confidence, registration_match, reason)
+         values ($1,$2,$3,'confirmed','import',1,1,0,'Procurement disclosure linked on re-import.')`,
+        [id, existing[0].id, input.entityId],
+      );
+    }
+    if (input.publish && existing[0].publication_state !== "published") {
+      const published = await publishEvidence(db, {
+        evidenceId: existing[0].id,
+        entityId: input.entityId,
+        actorType: "import",
+        actorId: ACTOR,
+        reason: "Official dated procurement disclosure linked to the named legal entity.",
+        expiringSoonDays: input.expiringSoonDays,
+      });
+      return {
+        url: sourceUrl,
+        evidenceId: existing[0].id,
+        duplicate: true,
+        published: published.ok,
+        kind: "procurement",
+        error: published.ok ? undefined : published.error,
+      };
+    }
+    return {
+      url: sourceUrl,
+      evidenceId: existing[0].id,
+      duplicate: true,
+      published: existing[0].publication_state === "published",
+      kind: "procurement",
+    };
+  }
+
+  const evidenceId = newId("evd");
+  const title = procurementTitle({
+    name: input.canonicalName,
+    institution: d.governmentInstitution,
+    tenderNumber: d.tenderNumber,
+    beeLevel,
+  });
+  const domain = extractDomain(sourceUrl);
+  await db.query(
+    `insert into evidence (
+        id, evidence_type, title, source_url, discovered_url, canonical_url, source_domain,
+        mime_type, content_hash, retrieved_at, publication_date, issue_date,
+        document_issuer, original_source_status, extraction_state, validation_state,
+        review_state, publication_state, lifecycle_state, source_live_status, public_notes
+     ) values (
+        $1,'government_procurement_disclosure',$2,$3,$3,$3,$4,
+        'text/html',$5,now(),$6,$6,
+        $7,'live','extracted','passed',
+        'none','unpublished','discovered','live',$8
+     )`,
+    [
+      evidenceId,
+      d.sourceTitle ?? title,
+      sourceUrl,
+      domain,
+      hash,
+      evidenceDate,
+      d.governmentInstitution,
+      procurementNotes(d),
+    ],
+  );
+  await db.query("insert into evidence_source_locations (id, evidence_id, url) values ($1,$2,$3)", [
+    newId("loc"),
+    evidenceId,
+    sourceUrl,
+  ]);
+  await db.query(
+    `insert into evidence_entity_links
+      (id, evidence_id, entity_id, link_state, extracted_name, match_method, confidence, registration_match, reason)
+     values ($1,$2,$3,'confirmed',$4,'import',1,0,$5)`,
+    [
+      newId("lnk"),
+      evidenceId,
+      input.entityId,
+      input.canonicalName,
+      `Official procurement disclosure from ${d.governmentInstitution}.`,
+    ],
+  );
+
+  const claims = [
+    claim("document_type", "government_procurement_disclosure", "government_procurement_disclosure", "evidence type"),
+    claim("measured_entity", input.canonicalName, input.canonicalName, "supplier name"),
+    claim("legal_entity_name", input.canonicalName, input.canonicalName, "supplier name"),
+    claim("bee_level", d.beeLevel, beeLevel, "recorded B-BBEE level"),
+    claim("issue_date", d.awardDate, evidenceDate, "award / evidence date"),
+    claim("tender_number", d.tenderNumber, d.tenderNumber ?? null, "tender number"),
+    claim("government_institution", d.governmentInstitution, d.governmentInstitution, "source institution"),
+    claim("enterprise_class", d.enterpriseClass, d.enterpriseClass?.toUpperCase() ?? null, "enterprise class"),
+    claim("tender_description", d.tenderDescription, d.tenderDescription ?? null, "tender description"),
+    claim("contract_period", d.contractPeriod, d.contractPeriod ?? null, "contract period"),
+    claim("contract_amount", d.contractAmount, d.contractAmount ?? null, "award amount"),
+    claim("procurement_outcome", d.outcome, d.outcome ?? "awarded", "procurement outcome"),
+  ].filter((c): c is ExtractionClaim => Boolean(c));
+
+  await persistExtraction(db, {
+    evidenceId,
+    parser: PARSER_PROCUREMENT,
+    result: { claims, warnings: [], ambiguity: [] },
+    success: true,
+    raw: JSON.stringify({
+      kind: "government_procurement_disclosure",
+      sourceUrl,
+      governmentInstitution: d.governmentInstitution,
+      tenderNumber: d.tenderNumber ?? null,
+      evidenceDate,
+    }),
+  });
+
+  if (!input.publish) {
+    return { url: sourceUrl, evidenceId, published: false, kind: "procurement" };
+  }
+  const published = await publishEvidence(db, {
+    evidenceId,
+    entityId: input.entityId,
+    actorType: "import",
+    actorId: ACTOR,
+    reason: "Official dated procurement disclosure from a government / public-body source.",
+    expiringSoonDays: input.expiringSoonDays,
+  });
+  return {
+    url: sourceUrl,
+    evidenceId,
+    published: published.ok,
+    kind: "procurement",
+    error: published.ok ? undefined : published.error,
+  };
 }
 
 function reviewUnsafe(type: string | null | undefined): boolean {
@@ -228,9 +472,24 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
     evidence: [],
     sources: [],
   };
-  const name = item.canonicalName.trim();
+  const cleaned = cleanSupplierName(item.canonicalName);
+  const name = cleaned.canonicalName;
+  result.canonicalName = name;
   if (name.length < 2) {
     result.error = "canonicalName is required.";
+    result.skipped = true;
+    return result;
+  }
+  if (isJointVentureName(name) || isJointVentureName(item.canonicalName)) {
+    result.error = "Held: joint-venture or consortium name.";
+    result.skipped = true;
+    result.skipReason = "jv";
+    return result;
+  }
+  if (isMalformedCompanyName(name)) {
+    result.error = "Held: malformed supplier name.";
+    result.skipped = true;
+    result.skipReason = "malformed";
     return result;
   }
 
@@ -247,8 +506,8 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
     try {
       const created = await createEntity(db, {
         canonicalName: name,
-        legalName: item.legalName ?? name,
-        tradingName: item.tradingName,
+        legalName: item.legalName ?? cleaned.original ?? name,
+        tradingName: item.tradingName ?? cleaned.tradingName,
         registrationNumber: item.registrationNumber,
         website: item.website,
         entityType: item.entityType ?? "company",
@@ -275,7 +534,11 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
     }
   }
 
-  for (const alias of item.aliases ?? []) {
+  const extraAliases = [...(item.aliases ?? []), ...cleaned.aliases];
+  if (cleaned.original && normalizeName(cleaned.original) !== normalizeName(name)) {
+    extraAliases.push(cleaned.original);
+  }
+  for (const alias of extraAliases) {
     if (alias.trim() && normalizeName(alias) !== normalizeName(name)) {
       await addAlias(db, { entityId, alias: alias.trim(), aliasType: "other", actorId: ACTOR });
     }
@@ -291,8 +554,8 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
     }
   }
 
-  if (item.parentName?.trim()) {
-    const parentId = await findParentId(db, item.parentName.trim());
+  if (item.parentName?.trim() || cleaned.parentName) {
+    const parentId = await findParentId(db, (item.parentName ?? cleaned.parentName)!.trim());
     if (parentId && parentId !== entityId) {
       const already = await db.query<{ id: string }>(
         `select id from entity_relationships
@@ -316,13 +579,26 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
   for (const source of item.sources ?? []) {
     if (source.url) sourceUrls.set(source.url, source);
   }
-  for (const ev of item.evidence ?? []) {
-    if (ev.url && !sourceUrls.has(ev.url)) {
-      sourceUrls.set(ev.url, { url: ev.url, sourceType: "certificate", frequency: "monthly" });
+  const hasProcurement = Boolean(item.procurement?.length);
+  if (!hasProcurement) {
+    for (const ev of item.evidence ?? []) {
+      if (ev.url && !sourceUrls.has(ev.url)) {
+        sourceUrls.set(ev.url, { url: ev.url, sourceType: "certificate", frequency: "monthly" });
+      }
     }
-  }
-  if (item.website && !sourceUrls.has(item.website)) {
-    sourceUrls.set(item.website, { url: item.website, sourceType: "other", frequency: "monthly" });
+    if (item.website && !sourceUrls.has(item.website)) {
+      sourceUrls.set(item.website, { url: item.website, sourceType: "other", frequency: "monthly" });
+    }
+  } else {
+    for (const row of item.procurement ?? []) {
+      if (row.sourceUrl && !sourceUrls.has(row.sourceUrl)) {
+        sourceUrls.set(row.sourceUrl, {
+          url: row.sourceUrl,
+          sourceType: "government_source",
+          frequency: "manual",
+        });
+      }
+    }
   }
 
   for (const source of sourceUrls.values()) {
@@ -345,6 +621,27 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
 
   const days = await getExpiringSoonDays(db);
   const shouldPublish = item.publishIfSafe !== false;
+
+  for (const disclosure of item.procurement ?? []) {
+    try {
+      const row = await importProcurementDisclosure(db, {
+        entityId,
+        canonicalName: name,
+        disclosure,
+        publish: shouldPublish,
+        expiringSoonDays: days,
+      });
+      if (row.published) result.published = true;
+      result.evidence.push(row);
+    } catch (err) {
+      result.evidence.push({
+        url: disclosure.sourceUrl,
+        kind: "procurement",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   for (const ev of item.evidence ?? []) {
     if (!ev.url) continue;
     try {

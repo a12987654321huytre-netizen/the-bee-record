@@ -31,6 +31,20 @@ const sourceSchema = z.object({
   frequency: z.enum(["daily", "weekly", "monthly", "manual"]).optional(),
 });
 
+const procurementSchema = z.object({
+  sourceUrl: z.string().url(),
+  governmentInstitution: z.string().min(2),
+  tenderNumber: z.string().optional(),
+  tenderDescription: z.string().optional(),
+  awardDate: z.string().optional(),
+  beeLevel: z.string().optional(),
+  enterpriseClass: z.string().optional(),
+  contractPeriod: z.string().optional(),
+  contractAmount: z.string().optional(),
+  sourceTitle: z.string().optional(),
+  outcome: z.enum(["awarded", "responded", "unsuccessful", "bidder_register"]).optional(),
+});
+
 const itemSchema = z.object({
   canonicalName: z.string().min(2),
   legalName: z.string().optional(),
@@ -44,12 +58,13 @@ const itemSchema = z.object({
   entityType: z.string().optional(),
   evidence: z.array(evidenceSchema).optional(),
   sources: z.array(sourceSchema).optional(),
+  procurement: z.array(procurementSchema).max(8).optional(),
   publishIfSafe: z.boolean().optional(),
 });
 
 const bodySchema = z.object({
   action: z.enum(["import", "crawl", "stats", "retry", "repair"]).optional(),
-  items: z.array(itemSchema).min(1).max(3).optional(),
+  items: z.array(itemSchema).min(1).max(25).optional(),
   crawlLimit: z.number().int().min(1).max(8).optional(),
   retryLimit: z.number().int().min(1).max(12).optional(),
   repairLimit: z.number().int().min(1).max(12).optional(),

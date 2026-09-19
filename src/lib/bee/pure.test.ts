@@ -12,6 +12,7 @@ import { hashPassword, verifyPassword, checkPasswordChange, passwordPolicyError 
 import { evaluateAutomation, validateClaims } from "./validation.ts";
 import { formatWhen } from "./format.ts";
 import { workingValue } from "./claims.server.ts";
+import { cleanSupplierName, isJointVentureName, isMalformedCompanyName, companyInterpretation } from "./disclosure.ts";
 
 describe("dates", () => {
   it("parses ISO and long forms", () => {
@@ -273,6 +274,59 @@ describe("lifecycle classification", () => {
     assert.equal(result.supportingEvidenceId, "evd_old");
   });
 
+  it("does not treat official procurement disclosure as a current certificate", () => {
+    const result = classifyPublishedEvidence(
+      [
+        {
+          id: "evd_proc",
+          evidence_type: "government_procurement_disclosure",
+          issue_date: "2026-06-22",
+          expiry_date: null,
+          discovered_at: "2026-09-19",
+          publication_state: "published",
+          bee_level: "1",
+        },
+      ],
+      "2026-09-19",
+      90,
+    );
+    assert.equal(result.decisions[0]?.lifecycle, "historical");
+    assert.equal(result.currentEvidenceId, null);
+    assert.equal(result.supportingEvidenceId, null);
+  });
+
+  it("keeps a live certificate current when procurement disclosure is also present", () => {
+    const result = classifyPublishedEvidence(
+      [
+        {
+          id: "evd_cert",
+          evidence_type: "bee_certificate",
+          issue_date: "2026-01-01",
+          expiry_date: "2027-01-01",
+          discovered_at: "2026-01-02",
+          publication_state: "published",
+          bee_level: "2",
+        },
+        {
+          id: "evd_proc",
+          evidence_type: "government_procurement_disclosure",
+          issue_date: "2026-06-22",
+          expiry_date: null,
+          discovered_at: "2026-09-19",
+          publication_state: "published",
+          bee_level: "1",
+        },
+      ],
+      "2026-09-19",
+      90,
+    );
+    const byId = Object.fromEntries(result.decisions.map((d) => [d.evidenceId, d.lifecycle]));
+    assert.equal(byId.evd_cert, "current");
+    assert.equal(byId.evd_proc, "historical");
+    assert.equal(result.currentEvidenceId, "evd_cert");
+    assert.equal(result.supportingEvidenceId, "evd_cert");
+  });
+
   it("does not keep a year-old certificate current when expiry was never extracted", () => {
     const result = classifyPublishedEvidence(
       [
@@ -361,6 +415,29 @@ describe("lifecycle classification", () => {
     );
     assert.equal(a.currentEvidenceId, "nampak_products");
     assert.equal(b.decisions[0]?.lifecycle, "expired");
+  });
+});
+
+describe("procurement disclosure identity", () => {
+  it("folds Datacentrix variants and rejects JVs", () => {
+    const a = cleanSupplierName("Datacentrix");
+    const b = cleanSupplierName("Datacentrix (Pty) Ltd");
+    assert.equal(normalizeName(a.canonicalName), normalizeName(b.canonicalName));
+    assert.equal(isJointVentureName("ABC Engineering / XYZ Civils JV"), true);
+    assert.equal(isJointVentureName("XSCANN TECHNOLOGIES (PTY) LTD"), false);
+    assert.equal(isMalformedCompanyName("Level 1"), true);
+    assert.equal(isMalformedCompanyName("PTY LTD"), true);
+    assert.equal(isMalformedCompanyName("STRUCTION CC"), true);
+    assert.equal(isMalformedCompanyName("SULTANTS (Pty) Ltd"), true);
+    assert.equal(isMalformedCompanyName("Datacentrix (Pty) Ltd"), false);
+    assert.equal(isMalformedCompanyName("XSCANN TECHNOLOGIES (PTY) LTD"), false);
+    const division = cleanSupplierName("Konica Minolta South Africa - a division of Bidvest Office (Pty) Ltd");
+    assert.equal(division.parentName?.includes("Bidvest"), true);
+    assert.equal(companyInterpretation({ hasDisclosure: true }), "official_dated_disclosure");
+    assert.equal(
+      companyInterpretation({ currentLifecycle: "current", currentEvidenceType: "bee_certificate" }),
+      "current_certificate",
+    );
   });
 });
 

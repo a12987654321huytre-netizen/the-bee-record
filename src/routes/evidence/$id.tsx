@@ -10,7 +10,7 @@ import {
   publicStateLabel,
   shortId,
 } from "@/lib/bee/format";
-import { CLAIM_FIELD_LABELS, type BeeField } from "@/lib/bee/constants";
+import { CLAIM_FIELD_LABELS, DISCLOSURE_FIELD_LABELS, isDisclosureEvidence, type BeeField } from "@/lib/bee/constants";
 import {
   canonicalFieldKey,
   extraPublicFields,
@@ -19,6 +19,7 @@ import {
   publicLocator,
   type LinkedEntityHint,
 } from "@/lib/bee/claim-quality.ts";
+import { disclosureInterpretation } from "@/lib/bee/disclosure";
 import { getEvidencePage } from "@/lib/bee/public.functions";
 
 export const Route = createFileRoute("/evidence/$id")({
@@ -66,6 +67,10 @@ function EvidencePage() {
   const signatoryName = isPublicClaimValue("signatory", signatory?.name ?? null)
     ? signatory?.name ?? null
     : claimValue("signatory");
+  const disclosure = isDisclosureEvidence(evidence.evidence_type);
+  const statusLabel = disclosure
+    ? disclosureInterpretation({ evidenceType: evidence.evidence_type, lifecycle: evidence.lifecycle_state })
+    : evidence.lifecycle_state;
 
   return (
     <PublicShell>
@@ -73,11 +78,18 @@ function EvidencePage() {
         <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-forest">Evidence {shortId(evidence.id)}</p>
         <h1 className="mt-2 font-display text-4xl">{evidence.title ?? evidence.id}</h1>
         <p className="mt-3 flex flex-wrap gap-2">
-          <LifecycleBadge state={evidence.lifecycle_state} />
+          <LifecycleBadge state={statusLabel} />
           <span className="text-sm text-muted">
             <EvidenceTypeLabel type={evidence.evidence_type} />
           </span>
         </p>
+        {disclosure ? (
+          <p className="mt-4 border border-rule bg-cream p-3 text-sm">
+            This record is an official dated procurement disclosure. It reports the B-BBEE level as published by the
+            source for that tender. It is not a current verification certificate, and no expiry date, verifier or
+            certificate number has been inferred.
+          </p>
+        ) : null}
 
         <h2 className="mt-10 font-display text-2xl">Evidence details</h2>
         <dl className="mt-4">
@@ -94,33 +106,51 @@ function EvidencePage() {
             }
           />
           <Field label="Evidence type" value={<EvidenceTypeLabel type={evidence.evidence_type} />} />
-          <Field label="Issue date" value={<DateCell value={evidence.issue_date} />} />
-          <Field label="Expiry date" value={<DateCell value={evidence.expiry_date} />} />
-          <Field label="Evidence status" value={<LifecycleBadge state={evidence.lifecycle_state} />} />
-          <Field
-            label="Verification agency"
-            value={
-              agency ? (
-                <Link to="/verifiers/$slug" params={{ slug: agency.slug }} className="underline underline-offset-4">
-                  {agency.name}
-                </Link>
-              ) : (
-                displayOrUnknown(isPublicClaimValue("verification_agency", evidence.document_issuer) ? evidence.document_issuer : null)
-              )
-            }
-          />
-          <Field label="Signatory" value={displayOrUnknown(signatoryName)} />
+          <Field label={disclosure ? "Evidence date" : "Issue date"} value={<DateCell value={evidence.issue_date} />} />
+          {disclosure ? null : <Field label="Expiry date" value={<DateCell value={evidence.expiry_date} />} />}
+          <Field label="Evidence status" value={<LifecycleBadge state={statusLabel} />} />
+          {disclosure ? (
+            <Field label="Government institution" value={displayOrUnknown(claimValue("government_institution") ?? evidence.document_issuer)} />
+          ) : (
+            <>
+              <Field
+                label="Verification agency"
+                value={
+                  agency ? (
+                    <Link to="/verifiers/$slug" params={{ slug: agency.slug }} className="underline underline-offset-4">
+                      {agency.name}
+                    </Link>
+                  ) : (
+                    displayOrUnknown(isPublicClaimValue("verification_agency", evidence.document_issuer) ? evidence.document_issuer : null)
+                  )
+                }
+              />
+              <Field label="Signatory" value={displayOrUnknown(signatoryName)} />
+            </>
+          )}
         </dl>
 
-        <h2 className="mt-10 font-display text-2xl">B-BBEE claims</h2>
-        <p className="mt-1 text-sm text-muted">Structured values taken from this document after review or a recorded automation rule.</p>
+        <h2 className="mt-10 font-display text-2xl">{disclosure ? "Reported B-BBEE claims" : "B-BBEE claims"}</h2>
+        <p className="mt-1 text-sm text-muted">
+          {disclosure
+            ? "Values copied from the official procurement table. They describe what that source recorded, not current certificate status."
+            : "Structured values taken from this document after review or a recorded automation rule."}
+        </p>
         <dl className="mt-4">
-          {PUBLIC_BBBEE_FIELDS.map((field) => (
+          {(disclosure ? (["bee_level", "measured_entity", "legal_entity_name"] as BeeField[]) : PUBLIC_BBBEE_FIELDS).map((field) => (
             <Field
               key={field}
               label={field === "scorecard_type" ? "Scorecard / sector code" : CLAIM_FIELD_LABELS[field]}
               value={displayClaim(field, claimValue(field))}
               hint={locatorFor(field)}
+            />
+          ))}
+          {extraKeys.map((key) => (
+            <Field
+              key={key}
+              label={DISCLOSURE_FIELD_LABELS[key as keyof typeof DISCLOSURE_FIELD_LABELS] ?? publicStateLabel(key)}
+              value={displayClaim(key, claimValue(key))}
+              hint={locatorFor(key)}
             />
           ))}
         </dl>
@@ -164,7 +194,7 @@ function EvidencePage() {
           <Field label="Publication status" value={publicStateLabel(evidence.publication_state)} />
         </dl>
 
-        {extraKeys.length ? (
+        {!disclosure && extraKeys.length ? (
           <>
             <h2 className="mt-10 font-display text-2xl">Additional extracted claims</h2>
             <dl className="mt-4">

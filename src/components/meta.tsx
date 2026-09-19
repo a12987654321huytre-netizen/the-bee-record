@@ -4,9 +4,16 @@ import { displayOrUnknown, formatEvidenceDate, formatLevel, lifecycleLabel } fro
 import { Status } from "./ui";
 
 export function lifecycleTone(state: string | null | undefined): "neutral" | "current" | "expired" | "warn" | "review" {
-  if (state === "current") return "current";
-  if (state === "expired" || state === "disputed") return "expired";
-  if (state === "expiring_soon" || state === "superseded" || state === "unknown_validity") return "warn";
+  if (state === "current" || state === "current_certificate") return "current";
+  if (state === "expired" || state === "disputed" || state === "expired_certificate") return "expired";
+  if (
+    state === "expiring_soon" ||
+    state === "superseded" ||
+    state === "unknown_validity" ||
+    state === "validity_unconfirmed"
+  ) {
+    return "warn";
+  }
   if (state === "discovered") return "review";
   return "neutral";
 }

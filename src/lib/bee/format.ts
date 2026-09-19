@@ -1,4 +1,4 @@
-import { LIFECYCLE_LABELS, PUBLIC_STATE_LABELS, UNKNOWN_LABELS, EVIDENCE_TYPE_LABELS, type EvidenceType } from "./constants.ts";
+import { LIFECYCLE_LABELS, PUBLIC_STATE_LABELS, UNKNOWN_LABELS, EVIDENCE_TYPE_LABELS, INTERPRETATION_LABELS, type EvidenceType } from "./constants.ts";
 import { formatDisplayDate } from "./dates.ts";
 import { displayBeeLevel } from "./level.ts";
 
@@ -17,6 +17,7 @@ export function displayOrUnknown(
 export function publicStateLabel(value: string | null | undefined, missing: keyof typeof UNKNOWN_LABELS = "not_found"): string {
   const v = value?.trim();
   if (!v) return unknown(missing);
+  if (INTERPRETATION_LABELS[v]) return INTERPRETATION_LABELS[v];
   if (LIFECYCLE_LABELS[v]) return LIFECYCLE_LABELS[v];
   if (PUBLIC_STATE_LABELS[v]) return PUBLIC_STATE_LABELS[v];
   if (EVIDENCE_TYPE_LABELS[v as EvidenceType]) return EVIDENCE_TYPE_LABELS[v as EvidenceType];

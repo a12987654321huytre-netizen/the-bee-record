@@ -1,6 +1,7 @@
 import { audit } from "./audit.server.ts";
 import { workingClaims, workingValue } from "./claims.server.ts";
 import { RECOGNIZED_DOCUMENT_TYPES } from "./constants.ts";
+import { isDisclosureEvidence } from "./constants.ts";
 import { compareIso, expiryStatus, todayIso, toIsoDate } from "./dates.ts";
 import { newId } from "./ids.ts";
 import { canonicalFieldKey, isPublicClaimValue } from "./claim-quality.ts";
@@ -183,8 +184,13 @@ export async function applyLifecycleForEntity(
     "select field_key, value, evidence_id, published_at from published_claims where entity_id = $1",
     [entityId],
   );
-  for (const row of existingClaims) {
-    if (row.value) fields.set(row.field_key, row.value);
+  // Certificate current-state fields come only from certificate-class evidence.
+  // Procurement disclosures keep their own extracted claims and must not fill
+  // "current B-BBEE certificate" on the company page.
+  if (supportingId) {
+    for (const row of existingClaims) {
+      if (row.value) fields.set(row.field_key, row.value);
+    }
   }
 
   if (supportingId && !classified.disputed) {
@@ -237,16 +243,20 @@ export async function applyLifecycleForEntity(
 
   const supporting = evidence.find((e) => e.id === supportingId) ?? null;
   const supportingLife = classified.decisions.find((d) => d.evidenceId === supportingId)?.lifecycle ?? null;
-  const unknownValidity = classified.decisions.some((d) => d.lifecycle === "unknown_validity");
+  const unknownValidity = classified.decisions.some(
+    (d) => d.lifecycle === "unknown_validity" && evidence.some((e) => e.id === d.evidenceId && !isDisclosureEvidence(e.evidence_type)),
+  );
   const entityLife = classified.disputed
     ? "disputed"
     : classified.currentEvidenceId
       ? (classified.decisions.find((d) => d.evidenceId === classified.currentEvidenceId)?.lifecycle ?? "current")
       : unknownValidity
         ? "unknown_validity"
-        : supportingLife === "expired" || !supportingId
+        : supportingLife === "expired"
           ? "expired"
-          : supportingLife;
+          : supportingId
+            ? supportingLife
+            : null;
 
   const publishedAt =
     existingClaims.find((c) => c.evidence_id === supportingId)?.published_at ??
@@ -338,9 +348,13 @@ export async function publishEvidence(
   if (!evidence) return { ok: false, error: "Evidence not found." };
 
   const claims = await workingClaims(db, input.evidenceId);
-  const fields = presentFields(claims);
-  const issueDate = toIsoDate(fields.get("issue_date") ?? evidence.issue_date);
-  const expiryDate = toIsoDate(fields.get("expiry_date") ?? evidence.expiry_date);
+  const disclosure = isDisclosureEvidence(evidence.evidence_type);
+  const claimFields = presentFields(claims);
+  const fields = disclosure ? new Map<string, string>() : claimFields;
+  const issueDate = toIsoDate(
+    disclosure ? (evidence.issue_date ?? claimFields.get("issue_date") ?? null) : (fields.get("issue_date") ?? evidence.issue_date),
+  );
+  const expiryDate = disclosure ? null : toIsoDate(fields.get("expiry_date") ?? evidence.expiry_date);
   const locks = await lockedFields(db, input.entityId);
   const skippedLocked: string[] = [];
 
@@ -364,6 +378,7 @@ export async function publishEvidence(
   }
 
   const shouldSupersede =
+    !disclosure &&
     Boolean(previousEvidenceId && previousEvidenceId !== input.evidenceId) &&
     isPrimaryEvidence(evidence.evidence_type) &&
     (!previous?.issue_date || !issueDate || compareIso(issueDate, previous.issue_date) >= 0);
@@ -433,7 +448,9 @@ export async function publishEvidence(
     }
   }
 
-  const lifecycle = expiryStatus(expiryDate, "current", input.expiringSoonDays, todayIso());
+  const lifecycle = disclosure
+    ? "historical"
+    : expiryStatus(expiryDate, "current", input.expiringSoonDays, todayIso());
   await db.query(
     `update evidence
      set publication_state = 'published',
@@ -443,7 +460,7 @@ export async function publishEvidence(
          expiry_date = coalesce($4, expiry_date),
          updated_at = now()
      where id = $1`,
-    [input.evidenceId, lifecycle, issueDate, expiryDate],
+    [input.evidenceId, lifecycle, issueDate, disclosure ? null : expiryDate],
   );
 
   const existingLink = await db.query<{ id: string }>(
@@ -472,10 +489,12 @@ export async function publishEvidence(
 
   await rebuildCurrentState(db, input.entityId, input.expiringSoonDays);
 
-  const level = fields.get("bee_level");
-  const summary = level
-    ? `Published B-BBEE level ${level} from evidence ${input.evidenceId}`
-    : `Published evidence ${input.evidenceId}`;
+  const level = (disclosure ? claimFields : fields).get("bee_level");
+  const summary = disclosure
+    ? `Published official procurement disclosure ${input.evidenceId}${level ? ` (reported B-BBEE level ${level})` : ""}. This is not a current verification certificate.`
+    : level
+      ? `Published B-BBEE level ${level} from evidence ${input.evidenceId}`
+      : `Published evidence ${input.evidenceId}`;
   await db.query(
     `insert into publication_events
       (id, entity_id, evidence_id, event_type, summary, previous_evidence_id, published_by)

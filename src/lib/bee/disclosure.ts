@@ -1,0 +1,239 @@
+import { collapseWhitespace, fold, normalizeName } from "./normalize.ts";
+import { sha256HexNode } from "./hash.ts";
+import { isDisclosureEvidence, isStatusEvidence } from "./constants.ts";
+import { displayBeeLevel } from "./level.ts";
+
+const JV_RE =
+  /\b(jv|j\/v|joint\s+ventures?|consortium|consortia|and\s+associates\s+jv)\b/i;
+const SLASH_JV_RE = /\s\/\s.+\b(jv|consortium)\b/i;
+const DIVISION_RE = /\s*(?:[-–—]|,\s*)\s*an?\s+division\s+of\s+/i;
+const TRADING_AS_RE = /\s+(?:t\/a|trading\s+as|ta)\s+/i;
+const URL_RE = /^https?:\/\//i;
+const NOISE_NAME_RE =
+  /^(n\/?a|none|tbc|tba|various|multiple|not\s+applicable|see\s+above|supplier|bidder|company|name of bidder|successful bidder)$/i;
+const FRAG_START_RE =
+  /^(pty\)|ltd|cc|inc|limited|tion|ing|vices|tors|prise|tions|care|school|solutions|projects|manufacturers|surveyors|recruitment|struction|sultants|sulting|plies|ments|trol|neers|gineers|neering|tium|terprise|ogies|lishers|and |of |the |for |to |new |all )\b/i;
+const DESC_PREFIX_RE =
+  /^(supply|deliver|appointment|provision|service of|bi-annual|single |dual |hiring |lease |maintenance |repair |installation |rendering |dressing |infrastructure |the supply|request for |tender for )/i;
+const CORE_STOP = new Set([
+  "institute",
+  "national",
+  "contractors",
+  "agencies",
+  "solutions",
+  "projects",
+  "manufacturers",
+  "removals",
+  "surveyors",
+  "recruitment",
+  "school",
+  "care",
+  "pty",
+  "ltd",
+  "limited",
+  "cc",
+  "inc",
+  "ness",
+  "prise",
+  "tions",
+  "company",
+  "enterprise",
+  "trading",
+  "holdings",
+  "group",
+  "services",
+  "consulting",
+  "medical",
+  "surgical",
+  "engineers",
+  "corporate",
+  "events",
+  "town",
+  "roads",
+  "plant",
+  "tiles",
+  "africa",
+  "centers",
+  "supplies",
+  "construction",
+  "consultants",
+  "systems",
+  "sa",
+]);
+const FRAGMENT_STEMS = new Set([
+  "struction",
+  "sultants",
+  "sulting",
+  "plies",
+  "ments",
+  "trol",
+  "neers",
+  "gineers",
+  "neering",
+  "tium",
+  "terprise",
+  "ogies",
+  "lishers",
+  "ment",
+  "ers",
+  "suplies",
+]);
+
+export type CleanedSupplier = {
+  canonicalName: string;
+  tradingName: string | null;
+  parentName: string | null;
+  aliases: string[];
+  original: string;
+};
+
+export function isJointVentureName(name: string): boolean {
+  const t = collapseWhitespace(name);
+  if (!t) return false;
+  if (JV_RE.test(t) || SLASH_JV_RE.test(t)) return true;
+  if (/\s\/\s/.test(t) && /\b(pty|ltd|limited|inc|cc)\b/i.test(t) && /\b(pty|ltd|limited|inc|cc)\b/i.test(t.split(/\s\/\s/)[1] ?? "")) {
+    return true;
+  }
+  return false;
+}
+
+export function isMalformedCompanyName(name: string): boolean {
+  const t = collapseWhitespace(name);
+  if (t.length < 3 || t.length > 140) return true;
+  if (URL_RE.test(t)) return true;
+  if (/^\d+$/.test(t)) return true;
+  if (NOISE_NAME_RE.test(t)) return true;
+  if (!/[A-Za-z]/.test(t)) return true;
+  if (/^(level\s*[1-8]|eme|qse|generic|gen)$/i.test(t)) return true;
+  if (/^r[\s\u00a0]?\d/i.test(t)) return true;
+  if (t.split(/\s+/).length > 16) return true;
+  if (t[0] && t[0] === t[0].toLowerCase() && /[a-z]/.test(t[0])) return true;
+  if (FRAG_START_RE.test(t)) return true;
+  if (DESC_PREFIX_RE.test(t) || /\bx\s*\d+\b/i.test(t)) return true;
+  if (/\bprovinces\b/i.test(t)) return true;
+  const letters = t.replace(/[^A-Za-z]/g, "");
+  if (letters.length < 6) return true;
+  const core = t
+    .replace(/\b(pty|ltd|limited|inc|cc|proprietary)\b/gi, " ")
+    .replace(/[^A-Za-z0-9& ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!core || CORE_STOP.has(core.toLowerCase())) return true;
+  const coreLetters = core.replace(/[^A-Za-z]/g, "");
+  if (coreLetters.length < 4) return true;
+  const words = core.split(" ");
+  if (words.every((w) => CORE_STOP.has(w.toLowerCase()) || FRAGMENT_STEMS.has(w.toLowerCase()) || w.length < 3)) {
+    return true;
+  }
+  const first = words[0]?.toLowerCase() ?? "";
+  if (FRAGMENT_STEMS.has(first)) return true;
+  if (words.length === 1 && first.length < 5) return true;
+  return false;
+}
+
+export function cleanSupplierName(raw: string): CleanedSupplier {
+  let original = collapseWhitespace(raw).replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"');
+  original = original.replace(/[\u2013\u2014]/g, "-");
+  original = original.replace(/\s+/g, " ").replace(/^[\s,.;:]+|[\s,.;:]+$/g, "");
+  original = original.replace(/\s*\(\s*pty\s*\)\s*ltd\.?/gi, " (Pty) Ltd");
+  original = original.replace(/\s+pty\.?\s*ltd\.?/gi, " (Pty) Ltd");
+  original = original.replace(/\s+limited\.?$/i, " Limited");
+  original = original.replace(/\s+ltd\.?$/i, " Ltd");
+  original = original.replace(/\s+incorporated\.?$/i, " Incorporated");
+  original = original.replace(/\s+inc\.?$/i, " Inc");
+  original = collapseWhitespace(original);
+
+  const aliases: string[] = [];
+  let canonicalName = original;
+  let tradingName: string | null = null;
+  let parentName: string | null = null;
+
+  const division = original.split(DIVISION_RE);
+  if (division.length === 2 && division[0] && division[1]) {
+    tradingName = collapseWhitespace(division[0]);
+    canonicalName = collapseWhitespace(division[1]);
+    parentName = canonicalName;
+    aliases.push(tradingName);
+  } else {
+    const trading = original.split(TRADING_AS_RE);
+    if (trading.length === 2 && trading[0] && trading[1]) {
+      canonicalName = collapseWhitespace(trading[0]);
+      tradingName = collapseWhitespace(trading[1]);
+      aliases.push(tradingName);
+    }
+  }
+
+  if (tradingName && normalizeName(tradingName) === normalizeName(canonicalName)) {
+    tradingName = null;
+  }
+
+  return {
+    canonicalName,
+    tradingName,
+    parentName,
+    aliases: aliases.filter((a) => normalizeName(a) !== normalizeName(canonicalName)),
+    original,
+  };
+}
+
+export function procurementIdentityHash(input: {
+  sourceUrl: string;
+  tenderNumber?: string | null;
+  canonicalName: string;
+  beeLevel?: string | null;
+  evidenceDate?: string | null;
+}): string {
+  const key = [
+    "gpd:v1",
+    fold(input.sourceUrl.trim()),
+    fold(input.tenderNumber ?? ""),
+    normalizeName(input.canonicalName),
+    fold(input.beeLevel ?? ""),
+    input.evidenceDate ?? "",
+  ].join("|");
+  return sha256HexNode(key);
+}
+
+export function disclosureInterpretation(input: {
+  evidenceType?: string | null;
+  lifecycle?: string | null;
+}): string {
+  if (isDisclosureEvidence(input.evidenceType)) {
+    if (input.lifecycle === "historical") return "historical_procurement_disclosure";
+    return "official_dated_disclosure";
+  }
+  if (input.lifecycle === "current") return "current_certificate";
+  if (input.lifecycle === "expiring_soon") return "expiring_soon";
+  if (input.lifecycle === "unknown_validity") return "validity_unconfirmed";
+  if (input.lifecycle === "expired") return "expired_certificate";
+  if (input.lifecycle === "historical" || input.lifecycle === "superseded") return "historical_certificate";
+  return input.lifecycle ?? "no_current_certificate";
+}
+
+export function companyInterpretation(input: {
+  currentLifecycle?: string | null;
+  currentEvidenceType?: string | null;
+  hasDisclosure?: boolean;
+}): string {
+  if (input.currentEvidenceType && isDisclosureEvidence(input.currentEvidenceType)) {
+    return input.hasDisclosure ? "official_dated_disclosure" : "no_current_certificate";
+  }
+  if (input.currentLifecycle === "current") return "current_certificate";
+  if (input.currentLifecycle === "expiring_soon") return "expiring_soon";
+  if (input.currentLifecycle === "unknown_validity") return "validity_unconfirmed";
+  if (input.currentLifecycle === "expired") return "expired_certificate";
+  if (input.currentLifecycle === "disputed") return "disputed";
+  if (input.hasDisclosure) return "official_dated_disclosure";
+  if (input.currentLifecycle === "historical" || input.currentLifecycle === "superseded") {
+    return "historical_certificate";
+  }
+  return "no_current_certificate";
+}
+
+export function reportedLevelLabel(level: string | null | undefined): string {
+  return displayBeeLevel(level) ?? "Level not stated";
+}
+
+export function isCertificateClassEvidence(type: string | null | undefined): boolean {
+  return isStatusEvidence(type) || (!isDisclosureEvidence(type) && Boolean(type));
+}

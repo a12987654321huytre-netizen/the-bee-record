@@ -117,7 +117,7 @@ export type AutomationRuleConfig = {
 };
 
 export type ExtractionClaim = {
-  field: BeeField;
+  field: BeeField | string;
   raw_value: string;
   normalized_value: string | null;
   confidence: number;

@@ -50,11 +50,12 @@ function Home() {
           <dl className="mt-10 grid grid-cols-2 gap-px bg-rule sm:grid-cols-4">
             <Stat label="Published companies" value={stats.companies} />
             <Stat label="Indexed evidence" value={stats.evidence} />
-            <Stat label="Historical records" value={stats.historical} />
-            <Stat label="Verification agencies" value={stats.verifiers} />
+            <Stat label="Current certificates" value={stats.currentCertificates} />
+            <Stat label="Official disclosures" value={stats.officialDisclosures} />
           </dl>
           <p className="mt-3 text-xs text-muted">
-            Counts are live from this database. {stats.updated30d} publication event{stats.updated30d === 1 ? "" : "s"} in
+            Counts are live from this database. Published companies have checkable B-BBEE evidence; they do not all have a
+            currently valid certificate. {stats.updated30d} publication event{stats.updated30d === 1 ? "" : "s"} in
             the last 30 days.
           </p>
         </div>

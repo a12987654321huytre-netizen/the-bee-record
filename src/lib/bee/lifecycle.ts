@@ -1,4 +1,4 @@
-import { STATUS_EVIDENCE_TYPES, RECOGNIZED_DOCUMENT_TYPES } from "./constants.ts";
+import { STATUS_EVIDENCE_TYPES, RECOGNIZED_DOCUMENT_TYPES, isDisclosureEvidence } from "./constants.ts";
 import { canonicalFieldKey, isPublicClaimValue } from "./claim-quality.ts";
 import { compareIso, expiryStatus, toIsoDate } from "./dates.ts";
 
@@ -21,7 +21,7 @@ export type ClassifyResult = {
   decisions: LifecycleDecision[];
   /** Live current (or expiring-soon) evidence, if one can be chosen. */
   currentEvidenceId: string | null;
-  /** Evidence that should drive the entity's displayed fields (may be expired). */
+  /** Evidence that should drive the entity's displayed certificate fields (may be expired). */
   supportingEvidenceId: string | null;
   disputed: boolean;
   reason: string | null;
@@ -65,6 +65,7 @@ function hasPresentValidity(e: LifecycleEvidence, now: string): boolean {
  * Never looks at other entities. Status certificates compete for CURRENT
  * only when present validity is positively established (explicit expiry that
  * has not passed). Missing expiry is Validity unconfirmed, not Current.
+ * Official procurement disclosures never compete for current certificate status.
  */
 export function classifyPublishedEvidence(
   rows: LifecycleEvidence[],
@@ -84,14 +85,31 @@ export function classifyPublishedEvidence(
     };
   }
 
-  const hasStatus = published.some((r) => isStatus(r.evidence_type));
+  const disclosures = published.filter((r) => isDisclosureEvidence(r.evidence_type));
+  const certificateClass = published.filter((r) => !isDisclosureEvidence(r.evidence_type));
+
+  for (const row of disclosures) {
+    decisions.set(row.id, "historical");
+  }
+
+  if (!certificateClass.length) {
+    return {
+      decisions: [...decisions.entries()].map(([evidenceId, lifecycle]) => ({ evidenceId, lifecycle })),
+      currentEvidenceId: null,
+      supportingEvidenceId: null,
+      disputed: false,
+      reason: null,
+    };
+  }
+
+  const hasStatus = certificateClass.some((r) => isStatus(r.evidence_type));
   const pool = hasStatus
-    ? published.filter((r) => isStatus(r.evidence_type))
-    : published.filter((r) => isRecognized(r.evidence_type));
-  const effectivePool = pool.length ? pool : published;
+    ? certificateClass.filter((r) => isStatus(r.evidence_type))
+    : certificateClass.filter((r) => isRecognized(r.evidence_type));
+  const effectivePool = pool.length ? pool : certificateClass;
   const competingIds = new Set(effectivePool.map((r) => r.id));
 
-  for (const row of published) {
+  for (const row of certificateClass) {
     if (isExpired(row, now)) decisions.set(row.id, "expired");
     else if (!hasPresentValidity(row, now) && (isStatus(row.evidence_type) || competingIds.has(row.id))) {
       // Current requires positive present validity. Missing expiry is not current,
@@ -157,13 +175,13 @@ export function classifyPublishedEvidence(
     }
   }
 
-  for (const row of published) {
+  for (const row of certificateClass) {
     if (decisions.has(row.id)) continue;
     decisions.set(row.id, isExpired(row, now) ? "expired" : "historical");
   }
 
   const supportingPool = [...effectivePool].sort(sortNewestFirst);
-  const supportingEvidenceId = currentEvidenceId ?? supportingPool[0]?.id ?? published[0]?.id ?? null;
+  const supportingEvidenceId = currentEvidenceId ?? supportingPool[0]?.id ?? null;
 
   return {
     decisions: [...decisions.entries()].map(([evidenceId, lifecycle]) => ({ evidenceId, lifecycle })),

@@ -525,6 +525,15 @@ export async function repairCorpusStats(db: Sql) {
        limit 20`,
     ),
     fieldOverrides: await q("select count(*)::int as n from field_overrides where locked = 1"),
+    officialDisclosures: await q(
+      "select count(*)::int as n from evidence where publication_state = 'published' and evidence_type = 'government_procurement_disclosure'",
+    ),
+    companiesWithoutCurrentCertificate: await q(
+      `select count(*)::int as n from entities e
+       left join entity_current_state cs on cs.entity_id = e.id
+       where e.visibility = 'public' and e.merged_into_id is null
+         and (cs.lifecycle_state is null or cs.lifecycle_state not in ('current','expiring_soon'))`,
+    ),
   };
 }
 

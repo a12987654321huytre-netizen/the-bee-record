@@ -8,6 +8,8 @@ export type PublicStats = {
   historical: number;
   verifiers: number;
   updated30d: number;
+  currentCertificates: number;
+  officialDisclosures: number;
 };
 
 export async function publicStats(db: Sql): Promise<PublicStats> {
@@ -26,12 +28,23 @@ export async function publicStats(db: Sql): Promise<PublicStats> {
   const updated30d = await db.query<{ n: number }>(
     "select count(*)::int as n from publication_events where published_at >= now() - interval '30 days'",
   );
+  const currentCertificates = await db.query<{ n: number }>(
+    `select count(*)::int as n from evidence
+     where publication_state = 'published'
+       and lifecycle_state in ('current','expiring_soon')
+       and evidence_type in ('bee_certificate','sworn_affidavit')`,
+  );
+  const officialDisclosures = await db.query<{ n: number }>(
+    "select count(*)::int as n from evidence where publication_state = 'published' and evidence_type = 'government_procurement_disclosure'",
+  );
   return {
     companies: companies[0]?.n ?? 0,
     evidence: evidence[0]?.n ?? 0,
     historical: historical[0]?.n ?? 0,
     verifiers: verifiers[0]?.n ?? 0,
     updated30d: updated30d[0]?.n ?? 0,
+    currentCertificates: currentCertificates[0]?.n ?? 0,
+    officialDisclosures: officialDisclosures[0]?.n ?? 0,
   };
 }
 
@@ -57,6 +70,8 @@ export type CompanyListItem = {
   agency_name: string | null;
   updated_at: string;
   sector_names: string | null;
+  has_disclosure: boolean;
+  current_evidence_type: string | null;
 };
 
 export async function listPublicCompanies(
@@ -130,7 +145,16 @@ export async function listPublicCompanies(
             (select string_agg(s.name, ', ' order by s.name)
              from entity_classifications ec
              join sectors s on s.id = ec.sector_id
-             where ec.entity_id = e.id and ec.is_public = 1) as sector_names
+             where ec.entity_id = e.id and ec.is_public = 1) as sector_names,
+            exists (
+              select 1 from evidence ev
+              join evidence_entity_links l on l.evidence_id = ev.id
+              where l.entity_id = e.id
+                and l.link_state in ('confirmed','extracted')
+                and ev.publication_state = 'published'
+                and ev.evidence_type = 'government_procurement_disclosure'
+            ) as has_disclosure,
+            (select ev.evidence_type from evidence ev where ev.id = cs.evidence_id) as current_evidence_type
      from entities e
      left join entity_current_state cs on cs.entity_id = e.id
      left join verification_agencies va on va.id = cs.verifier_agency_id
@@ -215,9 +239,15 @@ export async function getPublicEntity(db: Sql, slug: string) {
     [entity.id],
   );
   const evidence = await db.query<
-    EvidenceRow & { agency_name: string | null; signatory_name: string | null }
+    EvidenceRow & { agency_name: string | null; signatory_name: string | null; reported_bee_level: string | null }
   >(
-    `select e.*, va.name as agency_name, sg.name as signatory_name
+    `select e.*, va.name as agency_name, sg.name as signatory_name,
+            (select coalesce(c.edited_value, c.normalized_value, c.raw_value)
+             from extracted_claims c
+             join extraction_runs r on r.id = c.extraction_run_id
+             where c.evidence_id = e.id and c.field_key = 'bee_level' and r.success = 1
+             order by r.started_at desc
+             limit 1) as reported_bee_level
      from evidence e
      join evidence_entity_links l on l.evidence_id = e.id
      left join verification_agencies va on va.id = e.verifier_agency_id
