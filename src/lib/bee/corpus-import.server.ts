@@ -7,7 +7,7 @@ import { createSource } from "./crawler.server.ts";
 import { getExpiringSoonDays } from "./settings.server.ts";
 import { publishEvidence } from "./publication.server.ts";
 import { extractDomain, normalizeName, normalizeRegistration } from "./normalize.ts";
-import { formatZaRegistration, isZaCompanyRegistration } from "./enrichment.ts";
+import { formatZaRegistration, isVerifierRegistration, isZaCompanyRegistration } from "./enrichment.ts";
 import { newId } from "./ids.ts";
 import { normalizeBeeLevel } from "./level.ts";
 import { PARSER_PROCUREMENT } from "./constants.ts";
@@ -166,7 +166,7 @@ async function fillMissingIdentity(db: Sql, entityId: string, item: CorpusItem):
     tradingName?: string;
   } = { id: entityId, actorId: ACTOR };
   let changed = false;
-  if (!existing.registration_number && item.registrationNumber && isZaCompanyRegistration(item.registrationNumber)) {
+  if (!existing.registration_number && item.registrationNumber && isZaCompanyRegistration(item.registrationNumber) && !isVerifierRegistration(item.registrationNumber)) {
     const formatted = formatZaRegistration(item.registrationNumber);
     if (formatted) {
       const clash = await db.query<{ id: string }>(

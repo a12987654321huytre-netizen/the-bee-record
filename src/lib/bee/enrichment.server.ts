@@ -1,6 +1,6 @@
 import { audit } from "./audit.server.ts";
 import { createSource } from "./crawler.server.ts";
-import { EXTRA_SECTORS, formatZaRegistration, isZaCompanyRegistration, queuePredicate } from "./enrichment.ts";
+import { EXTRA_SECTORS, formatZaRegistration, isVerifierRegistration, isZaCompanyRegistration, queuePredicate } from "./enrichment.ts";
 import { addAlias, createRelationship, setClassification, updateEntity } from "./entities.server.ts";
 import { isJointVentureName, isMalformedCompanyName } from "./disclosure.ts";
 import { extractDomain, normalizeName, normalizeRegistration } from "./normalize.ts";
@@ -349,6 +349,12 @@ export async function auditEnrichment(db: Sql) {
     },
     duplicateNameGroups,
     queues,
+    copiedRegistrations: await db.query<{ target_id: string | null; after_state: string | null; created_at: string }>(
+      `select target_id, after_state, created_at from audit_logs
+       where action = 'entity.registration_copied'
+       order by created_at desc
+       limit 40`,
+    ),
   };
 }
 
@@ -584,6 +590,10 @@ export async function copyRegistrationFromCertificateClaims(
   for (const row of rows) {
     const formatted = formatZaRegistration(row.value);
     if (!formatted) continue;
+    if (isVerifierRegistration(formatted)) {
+      skippedInvalid += 1;
+      continue;
+    }
     const cur = byEntity.get(row.entity_id) ?? { name: row.canonical_name, values: new Set(), via: row.via };
     cur.values.add(formatted);
     if (row.via === "current_state") cur.via = row.via;
@@ -637,6 +647,43 @@ export async function copyRegistrationFromCertificateClaims(
     if (copied >= limit) break;
   }
   return { copied: opts?.dryRun ? 0 : copied, skippedConflict, skippedInvalid, samples };
+}
+
+export async function clearVerifierCopiedRegistrations(
+  db: Sql,
+  opts?: { dryRun?: boolean },
+): Promise<{ cleared: number; samples: Array<{ id: string; name: string; registration: string }> }> {
+  const rows = await db.query<{ id: string; canonical_name: string; registration_number: string }>(
+    `select id, canonical_name, registration_number from entities
+     where merged_into_id is null
+       and registration_number_normalized = any($1::text[])`,
+    [[...new Set(["199500052307", "200200136407", "200101796307", "200102796307"])]],
+  );
+  const samples = rows.map((r) => ({
+    id: r.id,
+    name: r.canonical_name,
+    registration: r.registration_number,
+  }));
+  if (!opts?.dryRun) {
+    for (const row of rows) {
+      if (/empowerlogic|aqrate|empowerdex/i.test(row.canonical_name)) continue;
+      await updateEntity(db, {
+        id: row.id,
+        registrationNumber: null,
+        actorId: ACTOR,
+      });
+      await audit(db, {
+        actorType: "import",
+        actorId: ACTOR,
+        action: "entity.registration_cleared",
+        targetType: "entity",
+        targetId: row.id,
+        before: { registration: row.registration_number },
+        reason: "Registration matched a known verification-agency number, not the measured entity.",
+      });
+    }
+  }
+  return { cleared: opts?.dryRun ? 0 : samples.filter((s) => !/empowerlogic|aqrate|empowerdex/i.test(s.name)).length, samples };
 }
 
 export async function mergeNormalizedDuplicates(
@@ -741,6 +788,7 @@ export type IdentityPatch = {
   legalName?: string;
   tradingName?: string;
   registrationNumber?: string;
+  replaceRegistrationIf?: string;
   website?: string;
   aliases?: string[];
   sectorIds?: string[];
@@ -790,7 +838,11 @@ export async function applyIdentityBatch(
 
     if (item.registrationNumber && isZaCompanyRegistration(item.registrationNumber)) {
       const formatted = formatZaRegistration(item.registrationNumber)!;
-      if (!row.registration_number) {
+      if (isVerifierRegistration(formatted)) {
+        skippedReg.push({ name: item.canonicalName, reason: "verifier_agency_registration" });
+      } else if (!row.registration_number || isVerifierRegistration(row.registration_number) ||
+          (item.replaceRegistrationIf &&
+            normalizeRegistration(row.registration_number) === normalizeRegistration(item.replaceRegistrationIf))) {
         const clash = await db.query<{ id: string }>(
           `select id from entities
            where registration_number_normalized = $1 and id <> $2 and merged_into_id is null

@@ -17,7 +17,19 @@ export const ZA_ENTITY_TYPES = new Set([
   "30",
 ]);
 
-/** CIPC-style YYYYNNNNNNTT after punctuation is stripped. */
+/** SANAS verification-agency company numbers — never copy onto measured entities. */
+export const VERIFIER_REGISTRATIONS = new Set([
+  "199500052307", // EmpowerLogic (Pty) Ltd
+  "200200136407", // AQRate (Pty) Ltd
+  "200101796307", // Empowerdex (Pty) Ltd (certificate footer)
+  "200102796307", // Empowerdex (Pty) Ltd (SANAS)
+]);
+
+export function isVerifierRegistration(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return VERIFIER_REGISTRATIONS.has(normalizeRegistration(value));
+}
+
 export function isZaCompanyRegistration(value: string | null | undefined): boolean {
   if (!value) return false;
   const n = normalizeRegistration(value);

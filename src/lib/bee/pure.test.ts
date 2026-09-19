@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { parseDate, expiryStatus } from "./dates.ts";
 import { parseExtractionJson, parseExtractionText } from "./extraction-schema.ts";
 import { extractDeterministically, inferEvidenceTypeFromUrl } from "./deterministic-extract.ts";
-import { enrichmentPriorityScore, formatZaRegistration, isZaCompanyRegistration, queuePredicate } from "./enrichment.ts";
+import { enrichmentPriorityScore, formatZaRegistration, isVerifierRegistration, isZaCompanyRegistration, queuePredicate } from "./enrichment.ts";
 import { canonicalFieldKey, isPlausibleEntityName, isPlausibleSignatory, publicLocator } from "./claim-quality.ts";
 import { classifyPublishedEvidence, mergeRepairClaims } from "./lifecycle.ts";
 import { normalizeBeeLevel } from "./level.ts";
@@ -62,6 +62,8 @@ describe("normalization", () => {
     assert.equal(isZaCompanyRegistration("1991/005476/30"), true);
     assert.equal(isZaCompanyRegistration("MAAA0123456"), false);
     assert.equal(isZaCompanyRegistration("123"), false);
+    assert.equal(isVerifierRegistration("1995/000523/07"), true);
+    assert.equal(isVerifierRegistration("1969/017128/06"), false);
   });
 });
 

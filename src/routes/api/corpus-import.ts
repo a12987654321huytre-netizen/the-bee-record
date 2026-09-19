@@ -27,6 +27,7 @@ import {
   closeSuppressedClaimReviews,
   closeRepairKeptConflicts,
   copyRegistrationFromCertificateClaims,
+  clearVerifierCopiedRegistrations,
   ensureCompanyWebsiteSources,
   ensureExtraSectors,
   listPriorityQueue,
@@ -66,6 +67,7 @@ const itemSchema = z.object({
   legalName: z.string().optional(),
   tradingName: z.string().optional(),
   registrationNumber: z.string().optional(),
+  replaceRegistrationIf: z.string().optional(),
   website: z.string().optional(),
   aliases: z.array(z.string()).optional(),
   sectorIds: z.array(z.string()).optional(),
@@ -99,6 +101,7 @@ const bodySchema = z.object({
       "close-suppressed",
       "close-repair-conflicts",
       "copy-regs",
+      "clear-agency-regs",
       "merge-dupes",
       "identity",
       "sectors",
@@ -170,6 +173,10 @@ export const Route = createFileRoute("/api/corpus-import")({
             }
             if (phase === "copy-regs") {
               const out = await copyRegistrationFromCertificateClaims(db, { limit, dryRun });
+              return Response.json({ ...(await stats(db)), phase, ...out });
+            }
+            if (phase === "clear-agency-regs") {
+              const out = await clearVerifierCopiedRegistrations(db, { dryRun });
               return Response.json({ ...(await stats(db)), phase, ...out });
             }
             if (phase === "merge-dupes") {
