@@ -138,12 +138,13 @@ export function sourceOrganisationLabel(row: {
   source_url?: string | null;
   evidence_type?: string | null;
 }): string {
-  const issuer = row.document_issuer?.trim();
-  if (issuer && !/^https?:/i.test(issuer)) return issuer;
   if (row.agency_name?.trim()) return row.agency_name.trim();
+  const issuer = row.document_issuer?.trim();
+  if (issuer && !/^https?:/i.test(issuer) && !/^[a-z0-9.-]+$/i.test(issuer)) return issuer;
   if (isCompanyDisclosureType(row.evidence_type) || row.evidence_type === "company_webpage") {
     return "Official company disclosure";
   }
+  if (issuer && !/^https?:/i.test(issuer)) return issuer;
   const host = row.source_domain?.replace(/^www\./, "") ?? null;
   if (host && !host.includes("/") && host.includes(".")) {
     return host;

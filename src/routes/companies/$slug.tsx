@@ -4,6 +4,7 @@ import { EmptyState, Field } from "@/components/ui";
 import { DateCell, EvidenceTypeLabel, LevelCell, LifecycleBadge } from "@/components/meta";
 import { displayOrUnknown, formatWhen } from "@/lib/bee/format";
 import { CLAIM_FIELD_LABELS, INTERPRETATION_LABELS, isDisclosureEvidence, type BeeField } from "@/lib/bee/constants";
+import { isPublicClaimValue } from "@/lib/bee/claim-quality";
 import { companyInterpretation, disclosureInterpretation } from "@/lib/bee/disclosure";
 import { isModernProcurementEvidence } from "@/lib/bee/recency";
 import { getCompanyPage } from "@/lib/bee/public.functions";
@@ -62,7 +63,8 @@ function CompanyPage() {
   const latestDate = latest ? resolveEvidenceDate(evidenceDateInput(latest)) : null;
   const latestKind = latest ? latestEvidenceKind(latest, latestDate ?? undefined) : null;
   const leadWithCertificate = showCertificateFields;
-  const certNumber = data.publishedClaims.find((c) => c.field_key === "certificate_number")?.value ?? null;
+  const certNumberRaw = data.publishedClaims.find((c) => c.field_key === "certificate_number")?.value ?? null;
+  const certNumber = isPublicClaimValue("certificate_number", certNumberRaw) ? certNumberRaw : null;
 
   const sortedEvidence = [...data.evidence].sort((a, b) => {
     const da = resolveEvidenceDate(evidenceDateInput(a)).iso ?? "";

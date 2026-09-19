@@ -22,7 +22,7 @@ import {
   polishEvidenceTitle,
   resolveEvidenceDate,
 } from "./evidence-date.ts";
-import { latestEvidenceKind, latestEvidenceRank, selectLatestPublicEvidence } from "./latest-evidence.ts";
+import { latestEvidenceKind, latestEvidenceRank, selectLatestPublicEvidence, sourceOrganisationLabel } from "./latest-evidence.ts";
 
 describe("dates", () => {
   it("parses ISO and long forms", () => {
@@ -676,6 +676,14 @@ describe("evidence dates", () => {
     assert.equal(latestEvidenceKind(cert), "current_certificate");
     assert.equal(latestEvidenceKind(proc), "official_procurement_disclosure");
     assert.equal(selectLatestPublicEvidence([proc, cert])?.id, "evd_cert");
+    assert.equal(
+      sourceOrganisationLabel({
+        evidence_type: "bee_certificate",
+        document_issuer: "empowerlogic",
+        agency_name: "EmpowerLogic (Pty) Ltd",
+      }),
+      "EmpowerLogic (Pty) Ltd",
+    );
   });
 });
 
