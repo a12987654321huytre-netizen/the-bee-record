@@ -349,10 +349,10 @@ export async function auditEnrichment(db: Sql) {
     },
     duplicateNameGroups,
     queues,
-    copiedRegistrations: await db.query<{ target_id: string | null; after_state: string | null; created_at: string }>(
-      `select target_id, after_state, created_at from audit_logs
+    copiedRegistrations: await db.query<{ target_id: string | null; after_state: string | null; at: string }>(
+      `select target_id, after_state, at from audit_logs
        where action = 'entity.registration_copied'
-       order by created_at desc
+       order by at desc
        limit 40`,
     ),
   };
