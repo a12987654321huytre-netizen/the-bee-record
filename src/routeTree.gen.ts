@@ -36,6 +36,7 @@ import { Route as VerifiersIndexRouteImport } from './routes/verifiers/index'
 import { Route as VerifiersSlugRouteImport } from './routes/verifiers/$slug'
 import { Route as AdminCompaniesIndexRouteImport } from './routes/admin/companies/index'
 import { Route as AdminCompaniesIdRouteImport } from './routes/admin/companies/$id'
+import { Route as AdminEnrichmentIndexRouteImport } from './routes/admin/enrichment/index'
 import { Route as AdminEvidenceIndexRouteImport } from './routes/admin/evidence/index'
 import { Route as AdminEvidenceIdRouteImport } from './routes/admin/evidence/$id'
 import { Route as AdminJobsIndexRouteImport } from './routes/admin/jobs/index'
@@ -180,6 +181,11 @@ const AdminCompaniesIdRoute = AdminCompaniesIdRouteImport.update({
   path: '/companies/$id',
   getParentRoute: () => AdminRouteRoute,
 } as any)
+const AdminEnrichmentIndexRoute = AdminEnrichmentIndexRouteImport.update({
+  id: '/enrichment/',
+  path: '/enrichment/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
 const AdminEvidenceIndexRoute = AdminEvidenceIndexRouteImport.update({
   id: '/evidence/',
   path: '/evidence/',
@@ -253,6 +259,7 @@ export interface FileRoutesByFullPath {
   '/admin/review/$id': typeof AdminReviewIdRoute
   '/admin/sources/$id': typeof AdminSourcesIdRoute
   '/admin/companies/': typeof AdminCompaniesIndexRoute
+  '/admin/enrichment/': typeof AdminEnrichmentIndexRoute
   '/admin/evidence/': typeof AdminEvidenceIndexRoute
   '/admin/jobs/': typeof AdminJobsIndexRoute
   '/admin/review/': typeof AdminReviewIndexRoute
@@ -289,6 +296,7 @@ export interface FileRoutesByTo {
   '/admin/review/$id': typeof AdminReviewIdRoute
   '/admin/sources/$id': typeof AdminSourcesIdRoute
   '/admin/companies': typeof AdminCompaniesIndexRoute
+  '/admin/enrichment': typeof AdminEnrichmentIndexRoute
   '/admin/evidence': typeof AdminEvidenceIndexRoute
   '/admin/jobs': typeof AdminJobsIndexRoute
   '/admin/review': typeof AdminReviewIndexRoute
@@ -327,6 +335,7 @@ export interface FileRoutesById {
   '/admin/review/$id': typeof AdminReviewIdRoute
   '/admin/sources/$id': typeof AdminSourcesIdRoute
   '/admin/companies/': typeof AdminCompaniesIndexRoute
+  '/admin/enrichment/': typeof AdminEnrichmentIndexRoute
   '/admin/evidence/': typeof AdminEvidenceIndexRoute
   '/admin/jobs/': typeof AdminJobsIndexRoute
   '/admin/review/': typeof AdminReviewIndexRoute
@@ -366,6 +375,7 @@ export interface FileRouteTypes {
     | '/admin/review/$id'
     | '/admin/sources/$id'
     | '/admin/companies/'
+    | '/admin/enrichment/'
     | '/admin/evidence/'
     | '/admin/jobs/'
     | '/admin/review/'
@@ -402,6 +412,7 @@ export interface FileRouteTypes {
     | '/admin/review/$id'
     | '/admin/sources/$id'
     | '/admin/companies'
+    | '/admin/enrichment'
     | '/admin/evidence'
     | '/admin/jobs'
     | '/admin/review'
@@ -439,6 +450,7 @@ export interface FileRouteTypes {
     | '/admin/review/$id'
     | '/admin/sources/$id'
     | '/admin/companies/'
+    | '/admin/enrichment/'
     | '/admin/evidence/'
     | '/admin/jobs/'
     | '/admin/review/'
@@ -657,6 +669,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminCompaniesIdRouteImport
       parentRoute: typeof AdminRouteRoute
     }
+    '/admin/enrichment/': {
+      id: '/admin/enrichment/'
+      path: '/enrichment'
+      fullPath: '/admin/enrichment/'
+      preLoaderRoute: typeof AdminEnrichmentIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/admin/evidence/': {
       id: '/admin/evidence/'
       path: '/evidence'
@@ -730,6 +749,7 @@ interface AdminRouteRouteChildren {
   AdminReviewIdRoute: typeof AdminReviewIdRoute
   AdminSourcesIdRoute: typeof AdminSourcesIdRoute
   AdminCompaniesIndexRoute: typeof AdminCompaniesIndexRoute
+  AdminEnrichmentIndexRoute: typeof AdminEnrichmentIndexRoute
   AdminEvidenceIndexRoute: typeof AdminEvidenceIndexRoute
   AdminJobsIndexRoute: typeof AdminJobsIndexRoute
   AdminReviewIndexRoute: typeof AdminReviewIndexRoute
@@ -750,6 +770,7 @@ const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminReviewIdRoute: AdminReviewIdRoute,
   AdminSourcesIdRoute: AdminSourcesIdRoute,
   AdminCompaniesIndexRoute: AdminCompaniesIndexRoute,
+  AdminEnrichmentIndexRoute: AdminEnrichmentIndexRoute,
   AdminEvidenceIndexRoute: AdminEvidenceIndexRoute,
   AdminJobsIndexRoute: AdminJobsIndexRoute,
   AdminReviewIndexRoute: AdminReviewIndexRoute,

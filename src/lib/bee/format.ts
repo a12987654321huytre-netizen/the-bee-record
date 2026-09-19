@@ -1,5 +1,6 @@
 import { LIFECYCLE_LABELS, PUBLIC_STATE_LABELS, UNKNOWN_LABELS, EVIDENCE_TYPE_LABELS, INTERPRETATION_LABELS, type EvidenceType } from "./constants.ts";
 import { formatDisplayDate } from "./dates.ts";
+import { formatEvidenceDateLabel, type DatePrecision } from "./evidence-date.ts";
 import { displayBeeLevel } from "./level.ts";
 
 export function unknown(kind: keyof typeof UNKNOWN_LABELS = "not_found"): string {
@@ -45,8 +46,18 @@ export function formatWhen(iso: string | Date | null | undefined): string {
   return s;
 }
 
-export function formatEvidenceDate(iso: string | Date | null | undefined): string {
+export function formatEvidenceDate(
+  iso: string | Date | null | undefined,
+  precision?: DatePrecision | string | null,
+  raw?: string | null,
+): string {
+  if (precision || raw) return formatEvidenceDateLabel(typeof iso === "string" || iso == null ? iso : iso.toISOString(), precision ?? null, raw);
   if (iso == null || iso === "") return unknown("not_found");
+  return formatWhen(iso);
+}
+
+export function formatIndexedDate(iso: string | Date | null | undefined): string {
+  if (iso == null || iso === "") return unknown("unknown");
   return formatWhen(iso);
 }
 

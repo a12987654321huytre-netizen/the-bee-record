@@ -35,6 +35,10 @@ import {
   rejectJunkReviews,
 } from "@/lib/bee/enrichment.server";
 import { sql } from "@/lib/bee/sql.server";
+import {
+  auditProcurementEvidenceDates,
+  repairProcurementEvidenceDates,
+} from "@/lib/bee/evidence-date.server";
 
 const evidenceSchema = z.object({
   url: z.string().url(),
@@ -109,6 +113,7 @@ const bodySchema = z.object({
       "queue",
       "reject-junk",
       "monitors",
+      "dates",
     ])
     .optional(),
   afterId: z.string().nullable().optional(),
@@ -214,6 +219,12 @@ export const Route = createFileRoute("/api/corpus-import")({
             if (phase === "queue") {
               const out = await listPriorityQueue(db, parsed.data.queue ?? "certificate_enrichment", limit ?? 40);
               return Response.json({ ok: true, phase, ...out });
+            }
+            if (phase === "dates") {
+              const out = parsed.data.dryRun
+                ? await auditProcurementEvidenceDates(db)
+                : await repairProcurementEvidenceDates(db);
+              return Response.json({ ...(await stats(db)), phase, ...out });
             }
             return Response.json(await auditEnrichment(db));
           } catch (err) {

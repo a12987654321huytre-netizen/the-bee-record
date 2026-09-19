@@ -45,6 +45,7 @@ export type EvidenceRow = {
   expiry_date: string | null;
   issue_date_raw: string | null;
   expiry_date_raw: string | null;
+  issue_date_precision: string | null;
   document_issuer: string | null;
   verifier_agency_id: string | null;
   signatory_id: string | null;

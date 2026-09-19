@@ -183,7 +183,10 @@ export const INTERPRETATION_LABELS: Record<string, string> = {
   expired_certificate: "Expired certificate",
   historical_certificate: "Historical certificate",
   official_dated_disclosure: "Official dated disclosure",
+  official_procurement_disclosure: "Official procurement disclosure",
+  official_company_disclosure: "Official company disclosure",
   historical_procurement_disclosure: "Historical procurement disclosure",
+  historical_disclosure: "Historical disclosure",
   no_current_certificate: "No current certificate in corpus",
 };
 
@@ -191,6 +194,8 @@ export const UNKNOWN_LABELS = {
   unknown: "Unknown",
   not_disclosed: "Not disclosed",
   not_found: "Not found in published evidence",
+  not_stated: "Not stated in source",
+  not_yet: "Not yet identified",
 } as const;
 
 export const PUBLIC_STATE_LABELS: Record<string, string> = {
@@ -218,7 +223,10 @@ export const PUBLIC_STATE_LABELS: Record<string, string> = {
   retained: "Retained (not published as a public file URL)",
   not_stored: "Not stored",
   official_dated_disclosure: "Official dated disclosure",
+  official_procurement_disclosure: "Official procurement disclosure",
+  official_company_disclosure: "Official company disclosure",
   historical_procurement_disclosure: "Historical procurement disclosure",
+  historical_disclosure: "Historical disclosure",
   current_certificate: "Current certificate",
   expired_certificate: "Expired certificate",
   historical_certificate: "Historical certificate",

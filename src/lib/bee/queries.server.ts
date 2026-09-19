@@ -1,5 +1,6 @@
 import { workingClaims, workingValue } from "./claims.server.ts";
 import { jsonParse, type Sql } from "./db-types.ts";
+import { LATEST_EVIDENCE_SQL_RANK } from "./latest-evidence.ts";
 import type { CurrentState, EntityRow, EvidenceRow } from "./types.ts";
 
 export type PublicStats = {
@@ -76,6 +77,22 @@ export type CompanyListItem = {
   disclosure_date: string | null;
   disclosure_url: string | null;
   disclosure_title: string | null;
+  latest_evidence_id: string | null;
+  latest_evidence_type: string | null;
+  latest_lifecycle: string | null;
+  latest_level: string | null;
+  latest_date: string | null;
+  latest_date_precision: string | null;
+  latest_date_raw: string | null;
+  latest_title: string | null;
+  latest_url: string | null;
+  latest_issuer: string | null;
+  latest_agency: string | null;
+  latest_expiry: string | null;
+  latest_domain: string | null;
+  latest_created_at: string | null;
+  latest_retrieved_at: string | null;
+  latest_discovered_at: string | null;
 };
 
 export async function listPublicCompanies(
@@ -86,6 +103,8 @@ export async function listPublicCompanies(
     sector?: string;
     agency?: string;
     lifecycle?: string;
+    evidenceType?: string;
+    year?: string;
     page?: number;
     pageSize?: number;
     sort?: string;
@@ -115,7 +134,7 @@ export async function listPublicCompanies(
     )`);
   }
   if (input.level) {
-    where.push(`cs.bee_level = ${add(input.level)}`);
+    where.push(`coalesce(latest.reported_level, cs.bee_level) = ${add(input.level)}`);
   }
   if (input.lifecycle) {
     where.push(`cs.lifecycle_state = ${add(input.lifecycle)}`);
@@ -126,16 +145,69 @@ export async function listPublicCompanies(
     );
   }
   if (input.agency) {
+    const slugP = add(input.agency);
     where.push(
-      `exists (select 1 from verification_agencies va where va.id = cs.verifier_agency_id and va.slug = ${add(input.agency)})`,
+      `(exists (select 1 from verification_agencies va where va.id = cs.verifier_agency_id and va.slug = ${slugP}) or latest.agency_slug = ${slugP})`,
     );
   }
+  if (input.year && /^\d{4}$/.test(input.year)) {
+    where.push(`latest.issue_date is not null and extract(year from latest.issue_date)::int = ${add(Number(input.year))}`);
+  }
+  if (input.evidenceType === "current_certificate") {
+    where.push(`latest.evidence_type in ('bee_certificate','sworn_affidavit') and latest.lifecycle_state in ('current','expiring_soon')`);
+  } else if (input.evidenceType === "official_procurement_disclosure") {
+    where.push(`latest.evidence_type = 'government_procurement_disclosure' and latest.issue_date is not null and latest.issue_date >= '2024-01-01'`);
+  } else if (input.evidenceType === "official_company_disclosure") {
+    where.push(`latest.evidence_type in ('company_disclosure','annual_report','integrated_report','esg_report','sustainability_report','transformation_report','investor_document') and latest.issue_date is not null and latest.issue_date >= '2024-01-01'`);
+  } else if (input.evidenceType === "historical_disclosure") {
+    where.push(`(
+      (latest.evidence_type = 'government_procurement_disclosure' and (latest.issue_date is null or latest.issue_date < '2024-01-01'))
+      or (latest.evidence_type in ('company_disclosure','annual_report','integrated_report','transformation_report') and (latest.issue_date is null or latest.issue_date < '2024-01-01'))
+    )`);
+  }
+
+  const latestJoin = `
+     left join lateral (
+       select ev.id,
+              ev.evidence_type,
+              ev.lifecycle_state,
+              ev.issue_date,
+              ev.issue_date_precision,
+              ev.issue_date_raw,
+              ev.expiry_date,
+              ev.title,
+              ev.source_url,
+              ev.document_issuer,
+              ev.source_domain,
+              va.name as agency_name,
+              va.slug as agency_slug,
+              ev.created_at,
+              ev.retrieved_at,
+              ev.discovered_at,
+              (select coalesce(c.edited_value, c.normalized_value, c.raw_value)
+               from extracted_claims c
+               join extraction_runs r on r.id = c.extraction_run_id
+               where c.evidence_id = ev.id and c.field_key = 'bee_level' and r.success = 1
+               order by r.started_at desc
+               limit 1) as reported_level
+       from evidence ev
+       join evidence_entity_links l on l.evidence_id = ev.id
+       left join verification_agencies va on va.id = ev.verifier_agency_id
+       where l.entity_id = e.id
+         and l.link_state in ('confirmed','extracted')
+         and ev.publication_state = 'published'
+       order by ${LATEST_EVIDENCE_SQL_RANK} desc,
+                ev.issue_date desc nulls last,
+                ev.id desc
+       limit 1
+     ) latest on true`;
 
   const whereSql = where.join(" and ");
   const totalRows = await db.query<{ n: number }>(
     `select count(*)::int as n
      from entities e
      left join entity_current_state cs on cs.entity_id = e.id
+     ${latestJoin}
      where ${whereSql}`,
     params,
   );
@@ -159,48 +231,30 @@ export async function listPublicCompanies(
                 and ev.evidence_type = 'government_procurement_disclosure'
             ) as has_disclosure,
             (select ev.evidence_type from evidence ev where ev.id = cs.evidence_id) as current_evidence_type,
-            (select coalesce(c.edited_value, c.normalized_value, c.raw_value)
-             from evidence ev
-             join evidence_entity_links l on l.evidence_id = ev.id
-             join extracted_claims c on c.evidence_id = ev.id
-             join extraction_runs r on r.id = c.extraction_run_id
-             where l.entity_id = e.id
-               and l.link_state in ('confirmed','extracted')
-               and ev.publication_state = 'published'
-               and ev.evidence_type = 'government_procurement_disclosure'
-               and c.field_key = 'bee_level' and r.success = 1
-             order by ev.issue_date desc nulls last, r.started_at desc
-             limit 1) as disclosure_level,
-            (select ev.issue_date
-             from evidence ev
-             join evidence_entity_links l on l.evidence_id = ev.id
-             where l.entity_id = e.id
-               and l.link_state in ('confirmed','extracted')
-               and ev.publication_state = 'published'
-               and ev.evidence_type = 'government_procurement_disclosure'
-             order by ev.issue_date desc nulls last, ev.updated_at desc
-             limit 1) as disclosure_date,
-            (select ev.source_url
-             from evidence ev
-             join evidence_entity_links l on l.evidence_id = ev.id
-             where l.entity_id = e.id
-               and l.link_state in ('confirmed','extracted')
-               and ev.publication_state = 'published'
-               and ev.evidence_type = 'government_procurement_disclosure'
-             order by ev.issue_date desc nulls last, ev.updated_at desc
-             limit 1) as disclosure_url,
-            (select ev.title
-             from evidence ev
-             join evidence_entity_links l on l.evidence_id = ev.id
-             where l.entity_id = e.id
-               and l.link_state in ('confirmed','extracted')
-               and ev.publication_state = 'published'
-               and ev.evidence_type = 'government_procurement_disclosure'
-             order by ev.issue_date desc nulls last, ev.updated_at desc
-             limit 1) as disclosure_title
+            latest.reported_level as disclosure_level,
+            latest.issue_date as disclosure_date,
+            latest.source_url as disclosure_url,
+            latest.title as disclosure_title,
+            latest.id as latest_evidence_id,
+            latest.evidence_type as latest_evidence_type,
+            latest.lifecycle_state as latest_lifecycle,
+            latest.reported_level as latest_level,
+            latest.issue_date as latest_date,
+            latest.issue_date_precision as latest_date_precision,
+            latest.issue_date_raw as latest_date_raw,
+            latest.title as latest_title,
+            latest.source_url as latest_url,
+            latest.document_issuer as latest_issuer,
+            latest.agency_name as latest_agency,
+            latest.expiry_date as latest_expiry,
+            latest.source_domain as latest_domain,
+            latest.created_at as latest_created_at,
+            latest.retrieved_at as latest_retrieved_at,
+            latest.discovered_at as latest_discovered_at
      from entities e
      left join entity_current_state cs on cs.entity_id = e.id
      left join verification_agencies va on va.id = cs.verifier_agency_id
+     ${latestJoin}
      where ${whereSql}
      order by e.canonical_name
      limit ${limitP} offset ${offsetP}`,
@@ -282,7 +336,14 @@ export async function getPublicEntity(db: Sql, slug: string) {
     [entity.id],
   );
   const evidence = await db.query<
-    EvidenceRow & { agency_name: string | null; signatory_name: string | null; reported_bee_level: string | null }
+    EvidenceRow & {
+      agency_name: string | null;
+      signatory_name: string | null;
+      reported_bee_level: string | null;
+      tender_number: string | null;
+      government_institution: string | null;
+      enterprise_class: string | null;
+    }
   >(
     `select e.*, va.name as agency_name, sg.name as signatory_name,
             (select coalesce(c.edited_value, c.normalized_value, c.raw_value)
@@ -290,14 +351,32 @@ export async function getPublicEntity(db: Sql, slug: string) {
              join extraction_runs r on r.id = c.extraction_run_id
              where c.evidence_id = e.id and c.field_key = 'bee_level' and r.success = 1
              order by r.started_at desc
-             limit 1) as reported_bee_level
+             limit 1) as reported_bee_level,
+            (select coalesce(c.edited_value, c.normalized_value, c.raw_value)
+             from extracted_claims c
+             join extraction_runs r on r.id = c.extraction_run_id
+             where c.evidence_id = e.id and c.field_key = 'tender_number' and r.success = 1
+             order by r.started_at desc
+             limit 1) as tender_number,
+            (select coalesce(c.edited_value, c.normalized_value, c.raw_value)
+             from extracted_claims c
+             join extraction_runs r on r.id = c.extraction_run_id
+             where c.evidence_id = e.id and c.field_key = 'government_institution' and r.success = 1
+             order by r.started_at desc
+             limit 1) as government_institution,
+            (select coalesce(c.edited_value, c.normalized_value, c.raw_value)
+             from extracted_claims c
+             join extraction_runs r on r.id = c.extraction_run_id
+             where c.evidence_id = e.id and c.field_key = 'enterprise_class' and r.success = 1
+             order by r.started_at desc
+             limit 1) as enterprise_class
      from evidence e
      join evidence_entity_links l on l.evidence_id = e.id
      left join verification_agencies va on va.id = e.verifier_agency_id
      left join signatories sg on sg.id = e.signatory_id
      where l.entity_id = $1 and l.link_state in ('confirmed','extracted')
        and e.publication_state = 'published'
-     order by e.issue_date desc nulls last, e.discovered_at desc`,
+     order by e.issue_date desc nulls last, e.id desc`,
     [entity.id],
   );
   const publishedClaims = await db.query<{

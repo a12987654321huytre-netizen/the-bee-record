@@ -56,6 +56,10 @@ async function memoryDb(): Promise<{ db: Sql; pg: PGlite }> {
   await pg.waitReady;
   const migration = readFileSync(new URL("../../../migrations/0002_schema.sql", import.meta.url), "utf8");
   await pg.exec(migration);
+  const unknownValidity = readFileSync(new URL("../../../migrations/0003_unknown_validity.sql", import.meta.url), "utf8");
+  await pg.exec(unknownValidity);
+  const evidenceDates = readFileSync(new URL("../../../migrations/0004_evidence_dates.sql", import.meta.url), "utf8");
+  await pg.exec(evidenceDates);
   return { db: wrap(pg), pg };
 }
 

@@ -224,6 +224,7 @@ export function companyInterpretation(input: {
   currentEvidenceType?: string | null;
   hasDisclosure?: boolean;
   disclosureModern?: boolean | null;
+  hasCompanyDisclosure?: boolean;
 }): string {
   if (input.currentEvidenceType && isDisclosureEvidence(input.currentEvidenceType)) {
     if (input.disclosureModern === false) return "historical_procurement_disclosure";
@@ -239,6 +240,7 @@ export function companyInterpretation(input: {
       ? "historical_procurement_disclosure"
       : "official_dated_disclosure";
   }
+  if (input.hasCompanyDisclosure) return "official_company_disclosure";
   if (input.currentLifecycle === "historical" || input.currentLifecycle === "superseded") {
     return "historical_certificate";
   }
@@ -258,16 +260,35 @@ export type CompanySummaryInput = {
   currentEvidenceType?: string | null;
   hasDisclosure?: boolean;
   disclosureModern?: boolean | null;
+  hasCompanyDisclosure?: boolean;
   beeLevel?: string | null;
   disclosureLevel?: string | null;
+  latestKind?: string | null;
+  latestLevel?: string | null;
+  latestSource?: string | null;
+  latestDateLabel?: string | null;
+  expiryDateLabel?: string | null;
 };
 
 export function companySummaryText(input: CompanySummaryInput): string {
+  if (input.latestKind) {
+    const level = displayBeeLevel(input.latestLevel ?? null);
+    const kindLabel =
+      INTERPRETATION_LOOKUP[input.latestKind] ??
+      input.latestKind.replace(/_/g, " ");
+    if (input.latestKind === "current_certificate" || input.latestKind === "expiring_soon") {
+      const bits = [level, kindLabel, input.latestSource, input.expiryDateLabel ? `expires ${input.expiryDateLabel}` : input.latestDateLabel];
+      return bits.filter(Boolean).join(" · ");
+    }
+    const bits = [level, kindLabel, input.latestSource, input.latestDateLabel];
+    return bits.filter(Boolean).join(" · ");
+  }
   const interpretation = companyInterpretation({
     currentLifecycle: input.currentLifecycle,
     currentEvidenceType: input.currentEvidenceType,
     hasDisclosure: input.hasDisclosure,
     disclosureModern: input.disclosureModern,
+    hasCompanyDisclosure: input.hasCompanyDisclosure,
   });
   const certLevel = displayBeeLevel(input.beeLevel);
   const disclosureLevel = displayBeeLevel(input.disclosureLevel ?? null);
@@ -288,14 +309,32 @@ export function companySummaryText(input: CompanySummaryInput): string {
     return certLevel ? `${certLevel} · Historical certificate` : "Historical certificate";
   }
   if (interpretation === "disputed") return "Disputed";
-  if (interpretation === "official_dated_disclosure") {
-    return disclosureLevel ? `Official disclosure · ${disclosureLevel}` : "Official procurement disclosure";
+  if (interpretation === "official_dated_disclosure" || interpretation === "official_procurement_disclosure") {
+    return disclosureLevel ? `${disclosureLevel} · Official procurement disclosure` : "Official procurement disclosure";
   }
   if (interpretation === "historical_procurement_disclosure") {
-    return disclosureLevel ? `Historical disclosure · ${disclosureLevel}` : "Historical procurement disclosure";
+    return disclosureLevel ? `${disclosureLevel} · Historical procurement disclosure` : "Historical procurement disclosure";
+  }
+  if (interpretation === "official_company_disclosure") {
+    return disclosureLevel || certLevel
+      ? `${disclosureLevel ?? certLevel} · Official company disclosure`
+      : "Official company disclosure";
   }
   if (input.hasDisclosure) {
-    return disclosureLevel ? `Official disclosure · ${disclosureLevel}` : "Official procurement disclosure";
+    return disclosureLevel ? `${disclosureLevel} · Official procurement disclosure` : "Official procurement disclosure";
   }
   return "No current certificate in corpus";
 }
+
+const INTERPRETATION_LOOKUP: Record<string, string> = {
+  current_certificate: "Current certificate",
+  expiring_soon: "Expiring soon",
+  official_company_disclosure: "Official company disclosure",
+  official_procurement_disclosure: "Official procurement disclosure",
+  validity_unconfirmed: "Validity unconfirmed",
+  expired_certificate: "Expired certificate",
+  historical_certificate: "Historical certificate",
+  historical_procurement_disclosure: "Historical procurement disclosure",
+  historical_disclosure: "Historical disclosure",
+  official_dated_disclosure: "Official dated disclosure",
+};

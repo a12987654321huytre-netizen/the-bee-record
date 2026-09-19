@@ -1,9 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { PublicShell } from "@/components/public-shell";
 import { Button, EmptyState, Input } from "@/components/ui";
-import { CompanySummary, Pagination } from "@/components/meta";
+import { CompanySummary, Pagination, latestFromDirectoryRow } from "@/components/meta";
 import { searchPublic } from "@/lib/bee/public.functions";
-import { isModernProcurementEvidence } from "@/lib/bee/recency";
+import { formatEvidenceDate } from "@/lib/bee/format";
 
 type Search = { q?: string; page?: number };
 
@@ -49,32 +49,32 @@ function SearchPage() {
             <section className="md:col-span-2">
               <h2 className="font-display text-2xl">Companies</h2>
               <ul className="mt-3 divide-y divide-rule border-t border-rule">
-                {data.directory.items.map((row) => (
-                  <li key={row.id} className="flex flex-wrap justify-between gap-2 py-3">
-                    <div>
-                      <Link to="/companies/$slug" params={{ slug: row.slug }} className="font-medium hover:underline">
-                        {row.canonical_name}
-                      </Link>
-                      <p className="text-sm text-muted">{row.registration_number ?? "Registration number not found in published evidence"}</p>
-                    </div>
-                    <CompanySummary
-                      currentLifecycle={row.lifecycle_state}
-                      currentEvidenceType={row.current_evidence_type}
-                      hasDisclosure={Boolean(row.has_disclosure)}
-                      disclosureModern={
-                        row.has_disclosure
-                          ? isModernProcurementEvidence({
-                              issueDate: row.disclosure_date,
-                              sourceUrl: row.disclosure_url,
-                              title: row.disclosure_title,
-                            })
-                          : null
-                      }
-                      beeLevel={row.bee_level}
-                      disclosureLevel={row.disclosure_level}
-                    />
-                  </li>
-                ))}
+                {data.directory.items.map((row) => {
+                  const latest = latestFromDirectoryRow(row);
+                  const expiryLabel =
+                    latest.kind === "current_certificate" || latest.kind === "expiring_soon"
+                      ? latest.expiry
+                        ? formatEvidenceDate(latest.expiry, "day")
+                        : null
+                      : null;
+                  return (
+                    <li key={row.id} className="flex flex-wrap justify-between gap-2 py-3">
+                      <div>
+                        <Link to="/companies/$slug" params={{ slug: row.slug }} className="font-medium hover:underline">
+                          {row.canonical_name}
+                        </Link>
+                        <p className="text-sm text-muted">{row.registration_number ?? "Registration number not found in published evidence"}</p>
+                      </div>
+                      <CompanySummary
+                        latestKind={latest.kind}
+                        latestLevel={latest.level}
+                        latestSource={latest.source}
+                        latestDateLabel={latest.date.stated ? latest.date.label : null}
+                        expiryDateLabel={expiryLabel}
+                      />
+                    </li>
+                  );
+                })}
               </ul>
               <Pagination
                 page={data.directory.page}

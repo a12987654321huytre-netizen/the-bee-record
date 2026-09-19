@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useRouter, useRouteContext } from "@tanstack/react-router";
+import { useState } from "react";
 import { Button, Input, Label, Select, Textarea } from "@/components/ui";
 import {
   addAliasFn,
@@ -8,6 +9,7 @@ import {
   lockFieldFn,
   mergeCompaniesFn,
   removeAliasFn,
+  runEnrichmentPassFn,
   setClassificationFn,
   unmergeCompaniesFn,
   updateCompanyFn,
@@ -24,6 +26,8 @@ function CompanyAdmin() {
   const ctx = useRouteContext({ from: "/admin" });
   const router = useRouter();
   const csrf = ctx.session?.csrf ?? "";
+  const [enrichBusy, setEnrichBusy] = useState(false);
+  const [enrichError, setEnrichError] = useState<string | null>(null);
   const entity = data.entity as {
     id: string;
     canonical_name: string;
@@ -51,6 +55,25 @@ function CompanyAdmin() {
           <p className="text-sm">
             Public: <Link to="/companies/$slug" params={{ slug: entity.slug }} className="underline underline-offset-4">/{entity.slug}</Link>
           </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              disabled={enrichBusy}
+              onClick={async () => {
+                setEnrichBusy(true);
+                setEnrichError(null);
+                try {
+                  const result = await runEnrichmentPassFn({ data: { csrf, batchSize: 10, entityId: entity.id } });
+                  await router.navigate({ to: "/admin/jobs/$id", params: { id: result.jobId } });
+                } catch (err) {
+                  setEnrichError(err instanceof Error ? err.message : "Enrichment failed.");
+                  setEnrichBusy(false);
+                }
+              }}
+            >
+              {enrichBusy ? "Starting…" : "Enrich this company"}
+            </Button>
+          </div>
+          {enrichError ? <p className="mt-2 text-sm text-rust">{enrichError}</p> : null}
         </div>
 
         <form

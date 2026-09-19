@@ -1,9 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { PublicShell } from "@/components/public-shell";
 import { EmptyState } from "@/components/ui";
-import { CompanySummary, Pagination } from "@/components/meta";
+import { CompanySummary, Pagination, latestFromDirectoryRow } from "@/components/meta";
 import { getSectorPage } from "@/lib/bee/public.functions";
-import { isModernProcurementEvidence } from "@/lib/bee/recency";
 
 export const Route = createFileRoute("/sectors/$slug")({
   validateSearch: (s: Record<string, unknown>): { page?: number } => ({
@@ -32,29 +31,22 @@ function SectorPage() {
         ) : (
           <>
             <ul className="mt-8 divide-y divide-rule border-y border-rule">
-              {directory.items.map((row) => (
+              {directory.items.map((row) => {
+                const latest = latestFromDirectoryRow(row);
+                return (
                 <li key={row.id} className="flex justify-between gap-3 py-3">
                   <Link to="/companies/$slug" params={{ slug: row.slug }} className="font-medium hover:underline">
                     {row.canonical_name}
                   </Link>
                   <CompanySummary
-                    currentLifecycle={row.lifecycle_state}
-                    currentEvidenceType={row.current_evidence_type}
-                    hasDisclosure={Boolean(row.has_disclosure)}
-                    disclosureModern={
-                      row.has_disclosure
-                        ? isModernProcurementEvidence({
-                            issueDate: row.disclosure_date,
-                            sourceUrl: row.disclosure_url,
-                            title: row.disclosure_title,
-                          })
-                        : null
-                    }
-                    beeLevel={row.bee_level}
-                    disclosureLevel={row.disclosure_level}
+                    latestKind={latest.kind}
+                    latestLevel={latest.level}
+                    latestSource={latest.source}
+                    latestDateLabel={latest.date.stated ? latest.date.label : null}
                   />
                 </li>
-              ))}
+                );
+              })}
             </ul>
             <Pagination
               page={directory.page}

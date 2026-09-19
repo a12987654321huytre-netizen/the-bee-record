@@ -84,6 +84,14 @@ def parse_date(raw: str | None) -> str | None:
         d, mo, y = int(m.group(1)), int(m.group(2)), m.group(3)
         if 1 <= mo <= 12 and 1 <= d <= 31:
             return f"{y}-{mo:02d}-{d:02d}"
+    m = re.search(r"\b([A-Za-z]+)\s+(20\d{2})\b", t)
+    if m:
+        key = m.group(1).lower()
+        mo = MONTHS.get(key) or MONTHS.get(key[:3])
+        if mo:
+            return f"{m.group(2)}-{mo:02d}"
+    if re.fullmatch(r"20\d{2}", t):
+        return t
     return None
 
 
@@ -665,7 +673,7 @@ WC_EXTRA_URLS = {
 }
 
 
-def parse_wc_compact(text: str, source_url: str, title: str) -> list[dict]:
+def parse_wc_compact(text: str, source_url: str, title: str, fallback_date: str | None = None) -> list[dict]:
     """2023-style single-block rows: NAME CONTRACT DESC amountR LEVEL."""
     blob = re.sub(r"\s+", " ", text)
     blob = re.sub(r"SUCCESSFUL BIDDER.*?CONTRIBUTOR", " ", blob, flags=re.I)
@@ -685,7 +693,7 @@ def parse_wc_compact(text: str, source_url: str, title: str) -> list[dict]:
         level = None if m.group(5) else m.group(6)
         if not level:
             continue
-        dt = parse_date(m.group(3))
+        dt = parse_date(m.group(3)) or fallback_date
         rows.append(rec(
             source="wc_infrastructure",
             institution="Western Cape Department of Infrastructure",
@@ -711,12 +719,18 @@ def parse_wc_pdf(path: Path) -> list[dict]:
     if "BBBEE LEVEL" not in text.upper() and "B-BBEE" not in text.upper():
         return []
     month = None
+    year = None
     for m in ["january","february","march","april","may","june","july","august","september","october","november","december"]:
         if m in path.name.lower():
             month = m
             break
+    ym = re.search(r"(20\d{2})", path.name)
+    if ym:
+        year = ym.group(1)
     source_url = WC_EXTRA_URLS.get(path.name) or WC_MONTH_URL.format(month=month or "june")
-    title = f"Western Cape Infrastructure awards — {month or path.stem}"
+    month_label = month.title() if month else path.stem
+    title = f"Western Cape Infrastructure Awards — {month_label}" + (f" {year}" if year else "")
+    fallback_date = f"{year}-{MONTHS[month]:02d}" if year and month and month in MONTHS else (year if year else None)
     blob = re.sub(r"\s+", " ", text)
     splitter = re.compile(r"(LEVEL\s*[1-8]|NON[-\s]?CONTRIBUTOR)", re.I)
     parts = splitter.split(blob)
@@ -759,12 +773,12 @@ def parse_wc_pdf(path: Path) -> list[dict]:
             beeLevelRaw=collapse(level_raw),
             tenderNumber=collapse(cm.group(1)),
             tenderDescription=desc or None,
-            awardDate=parse_date(dt.group(1)),
+            awardDate=parse_date(dt.group(1)) or fallback_date,
             contractAmount=collapse(amt.group(1)),
             outcome="awarded",
         ))
     if len(rows) < 5:
-        extra = parse_wc_compact(text, source_url, title)
+        extra = parse_wc_compact(text, source_url, title, fallback_date)
         if len(extra) > len(rows):
             rows = extra
     return rows

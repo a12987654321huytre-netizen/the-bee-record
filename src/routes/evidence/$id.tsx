@@ -20,8 +20,8 @@ import {
   type LinkedEntityHint,
 } from "@/lib/bee/claim-quality.ts";
 import { disclosureInterpretation } from "@/lib/bee/disclosure";
-import { evidenceYearLabel } from "@/lib/bee/recency";
 import { getEvidencePage } from "@/lib/bee/public.functions";
+import { polishEvidenceTitle, resolveEvidenceDate } from "@/lib/bee/evidence-date";
 
 export const Route = createFileRoute("/evidence/$id")({
   loader: ({ params }) => getEvidencePage({ data: { id: params.id } }),
@@ -69,11 +69,22 @@ function EvidencePage() {
     ? signatory?.name ?? null
     : claimValue("signatory");
   const disclosure = isDisclosureEvidence(evidence.evidence_type);
+  const resolvedDate = resolveEvidenceDate({
+    issueDate: evidence.issue_date,
+    issueDateRaw: evidence.issue_date_raw,
+    precision: evidence.issue_date_precision,
+    sourceUrl: evidence.source_url,
+    title: evidence.title,
+    createdAt: evidence.created_at,
+    retrievedAt: evidence.retrieved_at,
+    discoveredAt: evidence.discovered_at,
+  });
+  const displayTitle = polishEvidenceTitle(evidence.title, resolvedDate) ?? evidence.title;
   const statusLabel = disclosure
     ? disclosureInterpretation({
         evidenceType: evidence.evidence_type,
         lifecycle: evidence.lifecycle_state,
-        issueDate: evidence.issue_date,
+        issueDate: resolvedDate.iso ?? evidence.issue_date,
         sourceUrl: evidence.source_url,
         title: evidence.title,
       })
@@ -83,7 +94,7 @@ function EvidencePage() {
     <PublicShell>
       <div className="mx-auto max-w-3xl px-4 py-10 md:px-6">
         <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-forest">Evidence {shortId(evidence.id)}</p>
-        <h1 className="mt-2 font-display text-4xl">{evidence.title ?? evidence.id}</h1>
+        <h1 className="mt-2 font-display text-4xl">{displayTitle ?? evidence.id}</h1>
         <p className="mt-3 flex flex-wrap gap-2">
           <LifecycleBadge state={statusLabel} />
           <span className="text-sm text-muted">
@@ -113,15 +124,23 @@ function EvidencePage() {
             }
           />
           <Field label="Evidence type" value={<EvidenceTypeLabel type={evidence.evidence_type} />} />
-          <Field label={disclosure ? "Evidence date" : "Issue date"} value={<DateCell value={evidence.issue_date} />} />
+          <Field
+            label={disclosure ? "Evidence date" : "Issue date"}
+            value={
+              resolvedDate.stated ? (
+                <span className="tabular-nums">{resolvedDate.label}</span>
+              ) : (
+                <DateCell
+                  value={null}
+                  missing={disclosure ? "not_stated" : "not_found"}
+                />
+              )
+            }
+          />
           {disclosure ? (
             <Field
               label="Source year"
-              value={evidenceYearLabel({
-                issueDate: evidence.issue_date,
-                sourceUrl: evidence.source_url,
-                title: evidence.title,
-              }) ?? displayOrUnknown(null)}
+              value={resolvedDate.year ? String(resolvedDate.year) : displayOrUnknown(null, "not_stated")}
             />
           ) : (
             <Field label="Expiry date" value={<DateCell value={evidence.expiry_date} />} />
@@ -193,7 +212,10 @@ function EvidencePage() {
             label="Archived copy"
             value={archived ? "Retained (not published as a public file URL)" : "Not stored"}
           />
-          <Field label="Retrieved date" value={<DateCell value={evidence.retrieved_at} />} />
+          <Field
+            label="Indexed by The BEE Record"
+            value={<DateCell value={evidence.retrieved_at ?? evidence.created_at} missing="unknown" />}
+          />
           <Field
             label="Content hash"
             value={

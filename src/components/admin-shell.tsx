@@ -11,6 +11,7 @@ const LINKS = [
   { to: "/admin/evidence", label: "Evidence" },
   { to: "/admin/sources", label: "Sources" },
   { to: "/admin/jobs", label: "Jobs" },
+  { to: "/admin/enrichment", label: "Enrichment" },
   { to: "/admin/submissions", label: "Submissions" },
   { to: "/admin/verifiers", label: "Verifiers" },
   { to: "/admin/audit", label: "Audit" },

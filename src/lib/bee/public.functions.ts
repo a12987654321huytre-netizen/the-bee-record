@@ -18,6 +18,7 @@ import {
   recentHome,
   searchAcross,
 } from "./queries.server.ts";
+import { ensureEvidenceDatesRepaired } from "./evidence-date.server.ts";
 import { sql } from "./sql.server.ts";
 import { checkFetchUrl } from "./ssrf.ts";
 
@@ -38,6 +39,7 @@ function stripTags(value: string): string {
 export const getHomeData = createServerFn({ method: "GET" }).handler(async () => {
   cachePublic();
   const db = await sql();
+  await ensureEvidenceDatesRepaired(db);
   const [stats, sectors, recent] = await Promise.all([publicStats(db), listSectors(db), recentHome(db)]);
   const expiring = await listExpiring(db, "expiring");
   const expired = await listExpiring(db, "expired");
@@ -49,6 +51,7 @@ export const searchPublic = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     cachePublic();
     const db = await sql();
+    await ensureEvidenceDatesRepaired(db);
     const q = data.q?.trim() ?? "";
     if (!q) return { q, companies: [], agencies: [], directory: { items: [], total: 0, page: 1, pageSize: 25 } };
     const [across, directory] = await Promise.all([
@@ -66,12 +69,15 @@ export const getCompanyDirectory = createServerFn({ method: "GET" })
       sector: z.string().optional(),
       agency: z.string().optional(),
       lifecycle: z.string().optional(),
+      evidenceType: z.string().optional(),
+      year: z.string().optional(),
       page: z.coerce.number().optional(),
     }),
   )
   .handler(async ({ data }) => {
     cachePublic();
     const db = await sql();
+    await ensureEvidenceDatesRepaired(db);
     const [result, sectors, agencies] = await Promise.all([
       listPublicCompanies(db, data),
       listSectors(db),
@@ -85,6 +91,7 @@ export const getCompanyPage = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     cachePublic();
     const db = await sql();
+    await ensureEvidenceDatesRepaired(db);
     const result = await getPublicEntity(db, data.slug);
     if (!result) throw notFound();
     if (!result.entity) {
@@ -98,6 +105,7 @@ export const getEvidencePage = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     cachePublic();
     const db = await sql();
+    await ensureEvidenceDatesRepaired(db);
     const result = await getPublicEvidence(db, data.id);
     if (!result) throw notFound();
     return result;
@@ -126,6 +134,7 @@ export const getSectorPage = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     cachePublic();
     const db = await sql();
+    await ensureEvidenceDatesRepaired(db);
     const sectors = await listSectors(db);
     const sector = sectors.find((s) => s.slug === data.slug);
     if (!sector) throw notFound();

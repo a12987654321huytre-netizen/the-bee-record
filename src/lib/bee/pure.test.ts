@@ -15,6 +15,14 @@ import { formatWhen } from "./format.ts";
 import { workingValue } from "./claims.server.ts";
 import { cleanSupplierName, isJointVentureName, isMalformedCompanyName, companyInterpretation, companySummaryText, disclosureInterpretation } from "./disclosure.ts";
 import { isModernProcurementEvidence, procurementQualifiesForPublicEntity } from "./recency.ts";
+import {
+  formatEvidenceDateLabel,
+  inferEvidenceDateFromSource,
+  isImportTimestampDate,
+  polishEvidenceTitle,
+  resolveEvidenceDate,
+} from "./evidence-date.ts";
+import { latestEvidenceKind, latestEvidenceRank, selectLatestPublicEvidence } from "./latest-evidence.ts";
 
 describe("dates", () => {
   it("parses ISO and long forms", () => {
@@ -503,11 +511,11 @@ describe("procurement disclosure identity", () => {
     );
     assert.equal(
       companySummaryText({ hasDisclosure: true, disclosureLevel: "1", disclosureModern: true }),
-      "Official disclosure · Level 1",
+      "Level 1 · Official procurement disclosure",
     );
     assert.equal(
       companySummaryText({ hasDisclosure: true, disclosureLevel: "2", disclosureModern: false }),
-      "Historical disclosure · Level 2",
+      "Level 2 · Historical procurement disclosure",
     );
     assert.equal(
       companySummaryText({ currentLifecycle: "current", currentEvidenceType: "bee_certificate", beeLevel: "1" }),
@@ -557,6 +565,117 @@ describe("procurement disclosure identity", () => {
       }),
       "historical_procurement_disclosure",
     );
+  });
+});
+
+describe("evidence dates", () => {
+  const amazaUrl =
+    "https://www.westerncape.gov.za/infrastructure/files/wcg-blob-files?file=2024-01/Contract%20Awards%20-%20July%202023_0.pdf&type=file";
+
+  it("prefers filename July 2023 over CMS folder 2024-01", () => {
+    const d = inferEvidenceDateFromSource({
+      sourceUrl: amazaUrl,
+      title: "Western Cape Infrastructure awards — july",
+    });
+    assert.equal(d.iso, "2023-07-01");
+    assert.equal(d.precision, "month");
+    assert.equal(d.label, "July 2023");
+    assert.equal(d.stated, true);
+  });
+
+  it("never uses created_at or discovered_at as the evidence date", () => {
+    const d = resolveEvidenceDate({
+      issueDate: "2026-09-19",
+      createdAt: "2026-09-19T10:00:00.000Z",
+      discoveredAt: "2026-09-19T10:00:00.000Z",
+      retrievedAt: "2026-09-19T10:00:00.000Z",
+      sourceUrl: amazaUrl,
+      title: "Western Cape Infrastructure awards — july",
+    });
+    assert.equal(isImportTimestampDate({
+      issueDate: "2026-09-19",
+      createdAt: "2026-09-19T10:00:00.000Z",
+    }), true);
+    assert.equal(d.label, "July 2023");
+    assert.notEqual(d.iso, "2026-09-19");
+  });
+
+  it("does not invent a day for month-only sources", () => {
+    const d = resolveEvidenceDate({
+      issueDate: "2026-07-01",
+      precision: "month",
+      title: "Overstrand Municipality tender awards — July 2026",
+    });
+    assert.equal(d.precision, "month");
+    assert.equal(d.label, "July 2026");
+    assert.equal(formatEvidenceDateLabel(d.iso, d.precision, d.raw), "July 2026");
+  });
+
+  it("reduces Overstrand invented 15th to month precision", () => {
+    const d = resolveEvidenceDate({
+      issueDate: "2026-07-15",
+      sourceUrl: "https://www.overstrand.gov.za/document/supply-chain-management/bid-awards-20262027/july/",
+      title: "Overstrand Municipality tender awards — July 2026",
+    });
+    assert.equal(d.precision, "month");
+    assert.equal(d.label, "July 2026");
+  });
+
+  it("reduces Theewaterskloof invented 30 June to year", () => {
+    const d = resolveEvidenceDate({
+      issueDate: "2025-06-30",
+      sourceUrl: "https://twk.gov.za/category/documents/supply-chain-management/quotations-and-tenders/quotations-and-tenders-awarded/",
+      title: "Theewaterskloof Municipality quotations and tenders awarded",
+      issueDateRaw: "2025",
+    });
+    assert.equal(d.precision, "year");
+    assert.equal(d.label, "2025");
+  });
+
+  it("reduces Stellenbosch invented 15 June to year when only a year is stated", () => {
+    const d = resolveEvidenceDate({
+      issueDate: "2024-06-15",
+      sourceUrl: "https://stellenbosch.gov.za/download/tender-awards-2024/",
+      title: "Stellenbosch Municipality tender awards 2024",
+    });
+    assert.equal(d.year, 2024);
+    assert.notEqual(d.precision, "day");
+  });
+
+  it("polishes awkward Western Cape titles with the inferred year", () => {
+    const d = inferEvidenceDateFromSource({ sourceUrl: amazaUrl, title: "Western Cape Infrastructure awards — july" });
+    assert.equal(polishEvidenceTitle("Western Cape Infrastructure awards — july", d), "Western Cape Infrastructure Awards — July 2023");
+  });
+
+  it("treats July 2023 Western Cape awards as historical, not modern", () => {
+    assert.equal(
+      isModernProcurementEvidence({
+        sourceUrl: amazaUrl,
+        title: "Western Cape Infrastructure awards — july",
+      }),
+      false,
+    );
+  });
+
+  it("ranks a current certificate above a recent procurement disclosure", () => {
+    const cert = {
+      id: "evd_cert",
+      evidence_type: "bee_certificate",
+      lifecycle_state: "current",
+      issue_date: "2026-04-14",
+      reported_bee_level: "3",
+    };
+    const proc = {
+      id: "evd_proc",
+      evidence_type: "government_procurement_disclosure",
+      issue_date: "2026-07-01",
+      issue_date_precision: "month",
+      reported_bee_level: "4",
+    };
+    assert.ok(latestEvidenceRank(cert) > latestEvidenceRank(proc));
+    assert.equal(latestEvidenceKind(cert), "current_certificate");
+    assert.equal(latestEvidenceKind(proc), "official_procurement_disclosure");
+    assert.equal(selectLatestPublicEvidence([proc, cert])?.id, "evd_cert");
   });
 });
 

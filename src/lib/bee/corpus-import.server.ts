@@ -18,6 +18,7 @@ import {
   isMalformedCompanyName,
   procurementIdentityHash,
 } from "./disclosure.ts";
+import { parseAwardDateInput, polishEvidenceTitle, inferEvidenceDateFromSource } from "./evidence-date.ts";
 import { procurementQualifiesForPublicEntity } from "./recency.ts";
 import type { Sql } from "./db-types.ts";
 import type { ExtractionClaim } from "./types.ts";
@@ -272,7 +273,13 @@ async function importProcurementDisclosure(
   }
   const sourceUrl = urlCheck.url.toString();
   const beeLevel = normalizeBeeLevel(d.beeLevel ?? null);
-  const evidenceDate = d.awardDate && /^\d{4}-\d{2}-\d{2}$/.test(d.awardDate) ? d.awardDate : null;
+  const parsedDate = parseAwardDateInput(d.awardDate ?? null);
+  const inferred = parsedDate.stated
+    ? parsedDate
+    : inferEvidenceDateFromSource({ sourceUrl, title: d.sourceTitle ?? null, issueDateRaw: d.awardDate });
+  const evidenceDate = inferred.stated ? inferred.iso : null;
+  const evidencePrecision = inferred.stated ? inferred.precision : null;
+  const evidenceRaw = inferred.stated ? inferred.raw : d.awardDate ?? null;
   const hash = procurementIdentityHash({
     sourceUrl,
     tenderNumber: d.tenderNumber,
@@ -326,32 +333,35 @@ async function importProcurementDisclosure(
   }
 
   const evidenceId = newId("evd");
-  const title = procurementTitle({
+  const generated = procurementTitle({
     name: input.canonicalName,
     institution: d.governmentInstitution,
     tenderNumber: d.tenderNumber,
     beeLevel,
   });
+  const title = polishEvidenceTitle(d.sourceTitle ?? generated, inferred) ?? generated;
   const domain = extractDomain(sourceUrl);
   await db.query(
     `insert into evidence (
         id, evidence_type, title, source_url, discovered_url, canonical_url, source_domain,
-        mime_type, content_hash, retrieved_at, publication_date, issue_date,
+        mime_type, content_hash, retrieved_at, publication_date, issue_date, issue_date_raw, issue_date_precision,
         document_issuer, original_source_status, extraction_state, validation_state,
         review_state, publication_state, lifecycle_state, source_live_status, public_notes
      ) values (
         $1,'government_procurement_disclosure',$2,$3,$3,$3,$4,
-        'text/html',$5,now(),$6,$6,
-        $7,'live','extracted','passed',
-        'none','unpublished','discovered','live',$8
+        'text/html',$5,now(),$6,$6,$7,$8,
+        $9,'live','extracted','passed',
+        'none','unpublished','discovered','live',$10
      )`,
     [
       evidenceId,
-      d.sourceTitle ?? title,
+      title,
       sourceUrl,
       domain,
       hash,
       evidenceDate,
+      evidenceRaw,
+      evidencePrecision,
       d.governmentInstitution,
       procurementNotes(d),
     ],
@@ -379,7 +389,7 @@ async function importProcurementDisclosure(
     claim("measured_entity", input.canonicalName, input.canonicalName, "supplier name"),
     claim("legal_entity_name", input.canonicalName, input.canonicalName, "supplier name"),
     claim("bee_level", d.beeLevel, beeLevel, "recorded B-BBEE level"),
-    claim("issue_date", d.awardDate, evidenceDate, "award / evidence date"),
+    claim("issue_date", evidenceRaw ?? d.awardDate, evidenceDate, "award / evidence date"),
     claim("tender_number", d.tenderNumber, d.tenderNumber ?? null, "tender number"),
     claim("government_institution", d.governmentInstitution, d.governmentInstitution, "source institution"),
     claim("enterprise_class", d.enterpriseClass, d.enterpriseClass?.toUpperCase() ?? null, "enterprise class"),

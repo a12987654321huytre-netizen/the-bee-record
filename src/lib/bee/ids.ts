@@ -30,6 +30,7 @@ const PREFIXES = {
   admin: "adm",
   session: "ses",
   attempt: "att",
+  enrichment: "enr",
 } as const;
 
 export type IdPrefix = (typeof PREFIXES)[keyof typeof PREFIXES];

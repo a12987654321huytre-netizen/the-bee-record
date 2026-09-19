@@ -39,6 +39,15 @@ import { checkFetchUrl } from "./ssrf.ts";
 import { slugify, normalizeName } from "./normalize.ts";
 import { uniqueSlug } from "./db-types.ts";
 import { ADMIN_QUEUES, queuePredicate } from "./enrichment.ts";
+import {
+  continueQueuedEnrichment,
+  enrichmentEligibilityCounts,
+  listEligibleCompanies,
+  listEnrichmentHistory,
+  processEnrichmentRun,
+  requestStopEnrichment,
+  startEnrichmentRun,
+} from "./enrichment-run.server.ts";
 
 function noStore() {
   setResponseHeader("cache-control", "no-store");
@@ -177,6 +186,7 @@ export const getDashboard = createServerFn({ method: "GET" }).handler(async () =
     upcoming,
     pendingReview,
     completeness,
+    enrichment: await enrichmentEligibilityCounts(db),
     aiConfigured: aiConfigured(),
   };
 });
@@ -775,7 +785,29 @@ export const getJobFn = createServerFn({ method: "GET" })
     const job = (await db.query("select * from crawler_jobs where id = $1", [data.id]))[0];
     if (!job) throw new Error("Job not found.");
     const events = await db.query("select * from crawler_job_events where job_id = $1 order by at", [data.id]);
-    return { job, events };
+    let run: Record<string, string | number | null> | null = null;
+    try {
+      const rows = await db.query<Record<string, string | number | null>>(
+        "select * from enrichment_runs where job_id = $1 limit 1",
+        [data.id],
+      );
+      run = rows[0] ?? null;
+    } catch {
+      run = null;
+    }
+    if (run && (run.status === "queued" || run.status === "processing")) {
+      try {
+        await processEnrichmentRun(db, String(run.id), { timeBudgetMs: 8_000, crawl: true });
+        const rows = await db.query<Record<string, string | number | null>>(
+          "select * from enrichment_runs where job_id = $1 limit 1",
+          [data.id],
+        );
+        run = rows[0] ?? run;
+      } catch {
+        /* continue on next poll / cron */
+      }
+    }
+    return { job, events, run };
   });
 
 export const retryJobFn = createServerFn({ method: "POST" })
@@ -962,3 +994,57 @@ export const runMaintenanceFn = createServerFn({ method: "POST" })
     const jobs = await runDueSources(db);
     return { jobs };
   });
+
+export const getEnrichmentAdmin = createServerFn({ method: "GET" }).handler(async () => {
+  noStore();
+  await requireAdmin();
+  const db = await sql();
+  const [counts, history, queue] = await Promise.all([
+    enrichmentEligibilityCounts(db),
+    listEnrichmentHistory(db, 25),
+    listEligibleCompanies(db, 25),
+  ]);
+  return { counts, history, queue };
+});
+
+export const runEnrichmentPassFn = createServerFn({ method: "POST" })
+  .validator(
+    z.object({
+      csrf: z.string(),
+      batchSize: z.union([z.literal(10), z.literal(25), z.literal(50), z.literal(100)]).default(25),
+      entityId: z.string().optional(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const session = await requireAdmin();
+    requireCsrf(session, data.csrf);
+    const db = await sql();
+    const { jobId, runId } = await startEnrichmentRun(db, {
+      batchSize: data.entityId ? 1 : data.batchSize,
+      entityId: data.entityId,
+      actorId: session.adminId,
+    });
+    await processEnrichmentRun(db, runId, { timeBudgetMs: 50_000, crawl: true });
+    return { ok: true as const, jobId, runId };
+  });
+
+export const stopEnrichmentFn = createServerFn({ method: "POST" })
+  .validator(z.object({ csrf: z.string(), runId: z.string() }))
+  .handler(async ({ data }) => {
+    const session = await requireAdmin();
+    requireCsrf(session, data.csrf);
+    const db = await sql();
+    await requestStopEnrichment(db, data.runId);
+    return { ok: true as const };
+  });
+
+export const continueEnrichmentFn = createServerFn({ method: "POST" })
+  .validator(z.object({ csrf: z.string() }))
+  .handler(async ({ data }) => {
+    const session = await requireAdmin();
+    requireCsrf(session, data.csrf);
+    const db = await sql();
+    const ids = await continueQueuedEnrichment(db);
+    return { ok: true as const, ids };
+  });
+

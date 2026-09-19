@@ -1042,7 +1042,7 @@ export async function listPriorityQueue(db: Sql, queue: string, limit = 40) {
              join evidence ev on ev.id = l.evidence_id
              where l.entity_id = e.id and ev.evidence_type = 'government_procurement_disclosure'
                and ev.publication_state = 'published') as procurement_n,
-            (select max(extract(year from coalesce(ev.issue_date, ev.created_at))::int)
+            (select max(extract(year from ev.issue_date)::int)
              from evidence_entity_links l
              join evidence ev on ev.id = l.evidence_id
              where l.entity_id = e.id and ev.evidence_type = 'government_procurement_disclosure') as latest_year

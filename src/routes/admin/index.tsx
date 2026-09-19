@@ -74,6 +74,27 @@ function Dashboard() {
         </Button>
       </div>
 
+      <h2 className="mt-10 font-display text-xl">Enrichment</h2>
+      <p className="mt-1 text-sm text-muted">
+        Identity and certificate research for companies already in the corpus. Run from here or open the full
+        enrichment queue.
+      </p>
+      <dl className="mt-4 grid grid-cols-2 gap-px bg-rule md:grid-cols-5">
+        <Metric label="Eligible for enrichment" value={data.enrichment.eligible} />
+        <Metric label="High priority" value={data.enrichment.highPriority} />
+        <Metric label="Procurement-only" value={data.enrichment.procurementOnly} />
+        <Metric label="No registration number" value={data.enrichment.missingRegistration} />
+        <Metric label="No current certificate" value={data.enrichment.noCertificate} />
+      </dl>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Link to="/admin/enrichment">
+          <Button>Run enrichment pass</Button>
+        </Link>
+        <Link to="/admin/enrichment">
+          <Button variant="ghost">View enrichment queue</Button>
+        </Link>
+      </div>
+
       <div className="mt-10 grid gap-8 lg:grid-cols-2">
         <List
           title="Pending review"
