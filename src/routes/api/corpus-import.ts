@@ -6,7 +6,7 @@ import {
   retryUnpublished,
   type CorpusItem,
 } from "@/lib/bee/corpus-import.server";
-import { listStaleProcurementEntities, unpublishStaleProcurementEntities } from "@/lib/bee/recency.server";
+import { auditPublicRecency, unpublishStaleProcurementEntities } from "@/lib/bee/recency.server";
 import { runDueSources, runSourceCheck } from "@/lib/bee/crawler.server";
 import {
   repairCorpusStats,
@@ -250,19 +250,12 @@ export const Route = createFileRoute("/api/corpus-import")({
             });
             return Response.json({ ...(await stats(db)), phase, ...out });
           }
-          const stale = await listStaleProcurementEntities(db);
+          const out = await auditPublicRecency(db);
           return Response.json({
             ...(await stats(db)),
             phase: "audit",
-            stale: stale.length,
-            unpublished: 0,
-            dryRun: true,
-            remaining: stale.length,
-            samples: stale.slice(0, 40).map((row) => ({
-              id: row.id,
-              slug: row.slug,
-              canonical_name: row.canonical_name,
-            })),
+            stale: out.unpublishPre2024 + out.unpublishUnknown,
+            ...out,
           });
         }
         if (action === "repair") {

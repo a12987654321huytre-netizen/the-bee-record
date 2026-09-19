@@ -14,7 +14,7 @@ import { evaluateAutomation, validateClaims } from "./validation.ts";
 import { formatWhen } from "./format.ts";
 import { workingValue } from "./claims.server.ts";
 import { cleanSupplierName, isJointVentureName, isMalformedCompanyName, companyInterpretation, companySummaryText, disclosureInterpretation } from "./disclosure.ts";
-import { isModernProcurementEvidence, procurementQualifiesForPublicEntity } from "./recency.ts";
+import { isModernProcurementEvidence, procurementQualifiesForPublicEntity, classifyEntityEligibility, evidenceDateEligibility } from "./recency.ts";
 import {
   formatEvidenceDateLabel,
   inferEvidenceDateFromSource,
@@ -540,7 +540,7 @@ describe("procurement disclosure identity", () => {
       isModernProcurementEvidence({
         sourceUrl: "https://www.treasury.gov.za/tenderinfo/awarded/",
       }),
-      true,
+      false,
     );
     assert.equal(
       procurementQualifiesForPublicEntity([
@@ -655,6 +655,87 @@ describe("evidence dates", () => {
       }),
       false,
     );
+  });
+
+  it("does not treat unknown or import-timestamp dates as 2024+", () => {
+    assert.equal(evidenceDateEligibility({ sourceUrl: "https://www.treasury.gov.za/tenderinfo/awarded/" }), "unknown");
+    assert.equal(
+      isModernProcurementEvidence({
+        issueDate: "2026-09-19",
+        createdAt: "2026-09-19T10:00:00.000Z",
+        discoveredAt: "2026-09-19T10:00:00.000Z",
+        retrievedAt: "2026-09-19T10:00:00.000Z",
+        sourceUrl: "https://www.treasury.gov.za/tenderinfo/awarded/",
+        title: "National Treasury — Information on Tenders awarded",
+      }),
+      false,
+    );
+    assert.equal(
+      procurementQualifiesForPublicEntity([{ sourceUrl: "https://www.treasury.gov.za/tenderinfo/awarded/" }]),
+      false,
+    );
+  });
+
+  it("unpublishes AMAZA-style July 2023-only procurement and keeps mixed 2024+ companies", () => {
+    const amaza = classifyEntityEligibility([
+      {
+        id: "evd_amaza",
+        type: "government_procurement_disclosure",
+        lifecycle: "historical",
+        issueDate: "2026-09-19",
+        createdAt: "2026-09-19T10:00:00.000Z",
+        discoveredAt: "2026-09-19T10:00:00.000Z",
+        sourceUrl: amazaUrl,
+        title: "Western Cape Infrastructure awards — july",
+      },
+    ]);
+    assert.equal(amaza.qualifies, false);
+    assert.equal(amaza.bucket, "unpublish_pre2024");
+    assert.equal(amaza.directoryHistoricalLatest, true);
+
+    const unknownOnly = classifyEntityEligibility([
+      {
+        id: "evd_unknown",
+        type: "government_procurement_disclosure",
+        sourceUrl: "https://www.treasury.gov.za/tenderinfo/awarded/",
+        title: "National Treasury — Information on Tenders awarded",
+      },
+    ]);
+    assert.equal(unknownOnly.qualifies, false);
+    assert.equal(unknownOnly.bucket, "unpublish_unknown");
+    assert.equal(unknownOnly.needsReview, true);
+
+    const currentCert = classifyEntityEligibility([
+      {
+        id: "evd_cert",
+        type: "bee_certificate",
+        lifecycle: "current",
+        issueDate: "2023-06-01",
+      },
+    ]);
+    assert.equal(currentCert.qualifies, true);
+    assert.equal(currentCert.currentCertificate, true);
+
+    const mixed = classifyEntityEligibility([
+      {
+        id: "evd_old",
+        type: "government_procurement_disclosure",
+        issueDate: "2023-07-01",
+        precision: "month",
+        sourceUrl: amazaUrl,
+        title: "Western Cape Infrastructure Awards — July 2023",
+      },
+      {
+        id: "evd_new",
+        type: "government_procurement_disclosure",
+        issueDate: "2025-03-01",
+        precision: "month",
+        title: "Overstrand Municipality tender awards — March 2025",
+      },
+    ]);
+    assert.equal(mixed.qualifies, true);
+    assert.equal(mixed.modernCount, 1);
+    assert.equal(mixed.pre2024Count, 1);
   });
 
   it("ranks a current certificate above a recent procurement disclosure", () => {
