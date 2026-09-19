@@ -590,10 +590,7 @@ export async function copyRegistrationFromCertificateClaims(
   for (const row of rows) {
     const formatted = formatZaRegistration(row.value);
     if (!formatted) continue;
-    if (isVerifierRegistration(formatted)) {
-      skippedInvalid += 1;
-      continue;
-    }
+    if (isVerifierRegistration(formatted)) continue;
     const cur = byEntity.get(row.entity_id) ?? { name: row.canonical_name, values: new Set(), via: row.via };
     cur.values.add(formatted);
     if (row.via === "current_state") cur.via = row.via;
