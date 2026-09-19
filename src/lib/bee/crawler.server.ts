@@ -94,7 +94,15 @@ export async function createSource(
     "select id from monitored_sources where canonical_url = $1 limit 1",
     [canonical],
   );
-  if (existing[0]) return existing[0].id;
+  if (existing[0]) {
+    if (input.entityId) {
+      await db.query(
+        "update monitored_sources set entity_id = coalesce(entity_id, $2), updated_at = now() where id = $1",
+        [existing[0].id, input.entityId],
+      );
+    }
+    return existing[0].id;
+  }
   const id = newId("src");
   const freq = input.frequency ?? "weekly";
   await db.query(
