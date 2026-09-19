@@ -6,6 +6,7 @@ import {
   retryUnpublished,
   type CorpusItem,
 } from "@/lib/bee/corpus-import.server";
+import { listStaleProcurementEntities, unpublishStaleProcurementEntities } from "@/lib/bee/recency.server";
 import { runDueSources, runSourceCheck } from "@/lib/bee/crawler.server";
 import {
   repairCorpusStats,
@@ -63,14 +64,16 @@ const itemSchema = z.object({
 });
 
 const bodySchema = z.object({
-  action: z.enum(["import", "crawl", "stats", "retry", "repair"]).optional(),
+  action: z.enum(["import", "crawl", "stats", "retry", "repair", "recency"]).optional(),
   items: z.array(itemSchema).min(1).max(25).optional(),
   crawlLimit: z.number().int().min(1).max(8).optional(),
   retryLimit: z.number().int().min(1).max(12).optional(),
   repairLimit: z.number().int().min(1).max(12).optional(),
-  phase: z.enum(["extract", "lifecycle", "reset", "cleanup", "sanitize", "schema"]).optional(),
+  phase: z.enum(["extract", "lifecycle", "reset", "cleanup", "sanitize", "schema", "audit", "unpublish"]).optional(),
   afterId: z.string().nullable().optional(),
   sourceId: z.string().optional(),
+  dryRun: z.boolean().optional(),
+  recencyLimit: z.number().int().min(1).max(1500).optional(),
 });
 
 async function stats(db: Awaited<ReturnType<typeof sql>>) {
@@ -99,6 +102,30 @@ export const Route = createFileRoute("/api/corpus-import")({
         const action = parsed.data.action ?? "import";
         if (action === "stats") {
           return Response.json(await stats(db));
+        }
+        if (action === "recency") {
+          const phase = parsed.data.phase ?? "audit";
+          if (phase === "unpublish") {
+            const out = await unpublishStaleProcurementEntities(db, {
+              limit: parsed.data.recencyLimit,
+              dryRun: parsed.data.dryRun,
+            });
+            return Response.json({ ...(await stats(db)), phase, ...out });
+          }
+          const stale = await listStaleProcurementEntities(db);
+          return Response.json({
+            ...(await stats(db)),
+            phase: "audit",
+            stale: stale.length,
+            unpublished: 0,
+            dryRun: true,
+            remaining: stale.length,
+            samples: stale.slice(0, 40).map((row) => ({
+              id: row.id,
+              slug: row.slug,
+              canonical_name: row.canonical_name,
+            })),
+          });
         }
         if (action === "repair") {
           const phase = parsed.data.phase ?? "extract";

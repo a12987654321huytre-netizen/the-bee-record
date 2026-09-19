@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { LIFECYCLE_LABELS, EVIDENCE_TYPE_LABELS, type EvidenceType } from "@/lib/bee/constants";
 import { displayOrUnknown, formatEvidenceDate, formatLevel, lifecycleLabel } from "@/lib/bee/format";
+import { companySummaryText } from "@/lib/bee/disclosure";
 import { Status } from "./ui";
 
 export function lifecycleTone(state: string | null | undefined): "neutral" | "current" | "expired" | "warn" | "review" {
@@ -28,6 +29,35 @@ export function EvidenceTypeLabel({ type }: { type: string }) {
 
 export function LevelCell({ level }: { level: string | null | undefined }) {
   return <span className="font-medium tabular-nums">{formatLevel(level)}</span>;
+}
+
+export function CompanySummary({
+  currentLifecycle,
+  currentEvidenceType,
+  hasDisclosure,
+  disclosureModern,
+  beeLevel,
+  disclosureLevel,
+}: {
+  currentLifecycle?: string | null;
+  currentEvidenceType?: string | null;
+  hasDisclosure?: boolean;
+  disclosureModern?: boolean | null;
+  beeLevel?: string | null;
+  disclosureLevel?: string | null;
+}) {
+  return (
+    <span className="text-sm">
+      {companySummaryText({
+        currentLifecycle,
+        currentEvidenceType,
+        hasDisclosure,
+        disclosureModern,
+        beeLevel,
+        disclosureLevel,
+      })}
+    </span>
+  );
 }
 
 export function DateCell({

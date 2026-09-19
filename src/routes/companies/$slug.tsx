@@ -5,6 +5,7 @@ import { DateCell, EvidenceTypeLabel, LevelCell, LifecycleBadge } from "@/compon
 import { displayOrUnknown, formatWhen, publicStateLabel } from "@/lib/bee/format";
 import { CLAIM_FIELD_LABELS, INTERPRETATION_LABELS, isDisclosureEvidence, type BeeField } from "@/lib/bee/constants";
 import { companyInterpretation, disclosureInterpretation } from "@/lib/bee/disclosure";
+import { isModernProcurementEvidence } from "@/lib/bee/recency";
 import { getCompanyPage } from "@/lib/bee/public.functions";
 
 export const Route = createFileRoute("/companies/$slug")({
@@ -31,6 +32,13 @@ function CompanyPage() {
       ? null
       : (data.evidence.find((ev) => ev.id === current?.evidence_id)?.evidence_type ?? null),
     hasDisclosure: disclosures.length > 0,
+    disclosureModern: disclosures.some((ev) =>
+      isModernProcurementEvidence({
+        issueDate: ev.issue_date,
+        sourceUrl: ev.source_url,
+        title: ev.title,
+      }),
+    ),
   });
   const showCertificateFields = interpretation === "current_certificate" || interpretation === "expiring_soon";
   const supportingCertificate = supporting && !isDisclosureEvidence(supporting.evidence_type) ? supporting : null;
@@ -151,7 +159,15 @@ function CompanyPage() {
                       {"reported_bee_level" in ev && ev.reported_bee_level ? (
                         <LevelCell level={String(ev.reported_bee_level)} />
                       ) : null}
-                      <LifecycleBadge state={disclosureInterpretation({ evidenceType: ev.evidence_type, lifecycle: ev.lifecycle_state })} />
+                      <LifecycleBadge
+                        state={disclosureInterpretation({
+                          evidenceType: ev.evidence_type,
+                          lifecycle: ev.lifecycle_state,
+                          issueDate: ev.issue_date,
+                          sourceUrl: ev.source_url,
+                          title: ev.title,
+                        })}
+                      />
                     </p>
                     {ev.source_url ? (
                       <p className="mt-1 text-sm">
@@ -189,7 +205,13 @@ function CompanyPage() {
                       <LifecycleBadge
                         state={
                           isDisclosureEvidence(ev.evidence_type)
-                            ? disclosureInterpretation({ evidenceType: ev.evidence_type, lifecycle: ev.lifecycle_state })
+                            ? disclosureInterpretation({
+                                evidenceType: ev.evidence_type,
+                                lifecycle: ev.lifecycle_state,
+                                issueDate: ev.issue_date,
+                                sourceUrl: ev.source_url,
+                                title: ev.title,
+                              })
                             : ev.lifecycle_state
                         }
                       />

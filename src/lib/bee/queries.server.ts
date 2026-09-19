@@ -72,6 +72,10 @@ export type CompanyListItem = {
   sector_names: string | null;
   has_disclosure: boolean;
   current_evidence_type: string | null;
+  disclosure_level: string | null;
+  disclosure_date: string | null;
+  disclosure_url: string | null;
+  disclosure_title: string | null;
 };
 
 export async function listPublicCompanies(
@@ -154,7 +158,46 @@ export async function listPublicCompanies(
                 and ev.publication_state = 'published'
                 and ev.evidence_type = 'government_procurement_disclosure'
             ) as has_disclosure,
-            (select ev.evidence_type from evidence ev where ev.id = cs.evidence_id) as current_evidence_type
+            (select ev.evidence_type from evidence ev where ev.id = cs.evidence_id) as current_evidence_type,
+            (select coalesce(c.edited_value, c.normalized_value, c.raw_value)
+             from evidence ev
+             join evidence_entity_links l on l.evidence_id = ev.id
+             join extracted_claims c on c.evidence_id = ev.id
+             join extraction_runs r on r.id = c.extraction_run_id
+             where l.entity_id = e.id
+               and l.link_state in ('confirmed','extracted')
+               and ev.publication_state = 'published'
+               and ev.evidence_type = 'government_procurement_disclosure'
+               and c.field_key = 'bee_level' and r.success = 1
+             order by ev.issue_date desc nulls last, r.started_at desc
+             limit 1) as disclosure_level,
+            (select ev.issue_date
+             from evidence ev
+             join evidence_entity_links l on l.evidence_id = ev.id
+             where l.entity_id = e.id
+               and l.link_state in ('confirmed','extracted')
+               and ev.publication_state = 'published'
+               and ev.evidence_type = 'government_procurement_disclosure'
+             order by ev.issue_date desc nulls last, ev.updated_at desc
+             limit 1) as disclosure_date,
+            (select ev.source_url
+             from evidence ev
+             join evidence_entity_links l on l.evidence_id = ev.id
+             where l.entity_id = e.id
+               and l.link_state in ('confirmed','extracted')
+               and ev.publication_state = 'published'
+               and ev.evidence_type = 'government_procurement_disclosure'
+             order by ev.issue_date desc nulls last, ev.updated_at desc
+             limit 1) as disclosure_url,
+            (select ev.title
+             from evidence ev
+             join evidence_entity_links l on l.evidence_id = ev.id
+             where l.entity_id = e.id
+               and l.link_state in ('confirmed','extracted')
+               and ev.publication_state = 'published'
+               and ev.evidence_type = 'government_procurement_disclosure'
+             order by ev.issue_date desc nulls last, ev.updated_at desc
+             limit 1) as disclosure_title
      from entities e
      left join entity_current_state cs on cs.entity_id = e.id
      left join verification_agencies va on va.id = cs.verifier_agency_id
@@ -443,9 +486,64 @@ export async function recentHome(db: Sql) {
     slug: string;
     canonical_name: string;
     bee_level: string | null;
+    lifecycle_state: string | null;
     published_at: string | null;
+    current_evidence_type: string | null;
+    has_disclosure: boolean;
+    disclosure_level: string | null;
+    disclosure_date: string | null;
+    disclosure_url: string | null;
+    disclosure_title: string | null;
   }>(
-    `select e.slug, e.canonical_name, cs.bee_level, cs.published_at
+    `select e.slug, e.canonical_name, cs.bee_level, cs.lifecycle_state, cs.published_at,
+            (select ev.evidence_type from evidence ev where ev.id = cs.evidence_id) as current_evidence_type,
+            exists (
+              select 1 from evidence ev
+              join evidence_entity_links l on l.evidence_id = ev.id
+              where l.entity_id = e.id
+                and l.link_state in ('confirmed','extracted')
+                and ev.publication_state = 'published'
+                and ev.evidence_type = 'government_procurement_disclosure'
+            ) as has_disclosure,
+            (select coalesce(c.edited_value, c.normalized_value, c.raw_value)
+             from evidence ev
+             join evidence_entity_links l on l.evidence_id = ev.id
+             join extracted_claims c on c.evidence_id = ev.id
+             join extraction_runs r on r.id = c.extraction_run_id
+             where l.entity_id = e.id
+               and l.link_state in ('confirmed','extracted')
+               and ev.publication_state = 'published'
+               and ev.evidence_type = 'government_procurement_disclosure'
+               and c.field_key = 'bee_level' and r.success = 1
+             order by ev.issue_date desc nulls last, r.started_at desc
+             limit 1) as disclosure_level,
+            (select ev.issue_date
+             from evidence ev
+             join evidence_entity_links l on l.evidence_id = ev.id
+             where l.entity_id = e.id
+               and l.link_state in ('confirmed','extracted')
+               and ev.publication_state = 'published'
+               and ev.evidence_type = 'government_procurement_disclosure'
+             order by ev.issue_date desc nulls last, ev.updated_at desc
+             limit 1) as disclosure_date,
+            (select ev.source_url
+             from evidence ev
+             join evidence_entity_links l on l.evidence_id = ev.id
+             where l.entity_id = e.id
+               and l.link_state in ('confirmed','extracted')
+               and ev.publication_state = 'published'
+               and ev.evidence_type = 'government_procurement_disclosure'
+             order by ev.issue_date desc nulls last, ev.updated_at desc
+             limit 1) as disclosure_url,
+            (select ev.title
+             from evidence ev
+             join evidence_entity_links l on l.evidence_id = ev.id
+             where l.entity_id = e.id
+               and l.link_state in ('confirmed','extracted')
+               and ev.publication_state = 'published'
+               and ev.evidence_type = 'government_procurement_disclosure'
+             order by ev.issue_date desc nulls last, ev.updated_at desc
+             limit 1) as disclosure_title
      from entities e
      left join entity_current_state cs on cs.entity_id = e.id
      where e.visibility = 'public' and e.merged_into_id is null
@@ -457,15 +555,25 @@ export async function recentHome(db: Sql) {
     title: string | null;
     evidence_type: string;
     issue_date: string | null;
+    source_url: string | null;
+    lifecycle_state: string | null;
     entity_name: string | null;
     entity_slug: string | null;
   }>(
-    `select e.id, e.title, e.evidence_type, e.issue_date, ent.canonical_name as entity_name, ent.slug as entity_slug
+    `select e.id, e.title, e.evidence_type, e.issue_date, e.source_url, e.lifecycle_state,
+            ent.canonical_name as entity_name, ent.slug as entity_slug
      from evidence e
      left join evidence_entity_links l on l.evidence_id = e.id and l.link_state = 'confirmed'
      left join entities ent on ent.id = l.entity_id and ent.visibility = 'public'
      where e.publication_state = 'published'
-     order by e.updated_at desc
+     order by
+       case
+         when e.issue_date >= '2024-01-01' then 0
+         when e.source_url ~ '/(2024|2025|2026)(/|$)' then 0
+         else 1
+       end,
+       coalesce(e.issue_date, '0001-01-01') desc,
+       e.updated_at desc
      limit 8`,
   );
   return { updated, evidence };

@@ -1,8 +1,9 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { PublicShell } from "@/components/public-shell";
 import { Button, EmptyState, Input } from "@/components/ui";
-import { LevelCell, Pagination } from "@/components/meta";
+import { CompanySummary, Pagination } from "@/components/meta";
 import { searchPublic } from "@/lib/bee/public.functions";
+import { isModernProcurementEvidence } from "@/lib/bee/recency";
 
 type Search = { q?: string; page?: number };
 
@@ -56,7 +57,22 @@ function SearchPage() {
                       </Link>
                       <p className="text-sm text-muted">{row.registration_number ?? "Registration number not found in published evidence"}</p>
                     </div>
-                    <LevelCell level={row.bee_level} />
+                    <CompanySummary
+                      currentLifecycle={row.lifecycle_state}
+                      currentEvidenceType={row.current_evidence_type}
+                      hasDisclosure={Boolean(row.has_disclosure)}
+                      disclosureModern={
+                        row.has_disclosure
+                          ? isModernProcurementEvidence({
+                              issueDate: row.disclosure_date,
+                              sourceUrl: row.disclosure_url,
+                              title: row.disclosure_title,
+                            })
+                          : null
+                      }
+                      beeLevel={row.bee_level}
+                      disclosureLevel={row.disclosure_level}
+                    />
                   </li>
                 ))}
               </ul>

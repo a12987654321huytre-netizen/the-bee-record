@@ -12,7 +12,8 @@ import { hashPassword, verifyPassword, checkPasswordChange, passwordPolicyError 
 import { evaluateAutomation, validateClaims } from "./validation.ts";
 import { formatWhen } from "./format.ts";
 import { workingValue } from "./claims.server.ts";
-import { cleanSupplierName, isJointVentureName, isMalformedCompanyName, companyInterpretation } from "./disclosure.ts";
+import { cleanSupplierName, isJointVentureName, isMalformedCompanyName, companyInterpretation, companySummaryText, disclosureInterpretation } from "./disclosure.ts";
+import { isModernProcurementEvidence, procurementQualifiesForPublicEntity } from "./recency.ts";
 
 describe("dates", () => {
   it("parses ISO and long forms", () => {
@@ -437,6 +438,66 @@ describe("procurement disclosure identity", () => {
     assert.equal(
       companyInterpretation({ currentLifecycle: "current", currentEvidenceType: "bee_certificate" }),
       "current_certificate",
+    );
+    assert.equal(
+      companyInterpretation({ hasDisclosure: true, disclosureModern: false }),
+      "historical_procurement_disclosure",
+    );
+    assert.equal(
+      companySummaryText({ hasDisclosure: true, disclosureLevel: "1", disclosureModern: true }),
+      "Official disclosure · Level 1",
+    );
+    assert.equal(
+      companySummaryText({ hasDisclosure: true, disclosureLevel: "2", disclosureModern: false }),
+      "Historical disclosure · Level 2",
+    );
+    assert.equal(
+      companySummaryText({ currentLifecycle: "current", currentEvidenceType: "bee_certificate", beeLevel: "1" }),
+      "Level 1 · Current certificate",
+    );
+    assert.equal(companySummaryText({ hasDisclosure: true }).includes("Not found"), false);
+    assert.equal(
+      isModernProcurementEvidence({
+        sourceUrl: "https://www.treasury.gov.za/divisions/ocpo/ostb/bulletins/2017/2969.pdf",
+        title: "Government Tender Bulletin 2017-2969",
+      }),
+      false,
+    );
+    assert.equal(
+      isModernProcurementEvidence({
+        awardDate: "2026-07-31",
+        sourceUrl: "https://www.justice.gov.za/cfo_tender/tenders-awarded.html",
+      }),
+      true,
+    );
+    assert.equal(
+      isModernProcurementEvidence({
+        sourceUrl: "https://www.treasury.gov.za/tenderinfo/awarded/",
+      }),
+      true,
+    );
+    assert.equal(
+      procurementQualifiesForPublicEntity([
+        { sourceUrl: "https://www.treasury.gov.za/divisions/ocpo/ostb/bulletins/2016/2901.pdf" },
+      ]),
+      false,
+    );
+    assert.equal(
+      disclosureInterpretation({
+        evidenceType: "government_procurement_disclosure",
+        lifecycle: "historical",
+        issueDate: "2026-07-31",
+        sourceUrl: "https://www.justice.gov.za/cfo_tender/tenders-awarded.html",
+      }),
+      "official_dated_disclosure",
+    );
+    assert.equal(
+      disclosureInterpretation({
+        evidenceType: "government_procurement_disclosure",
+        lifecycle: "historical",
+        sourceUrl: "https://www.treasury.gov.za/divisions/ocpo/ostb/bulletins/2017/2969.pdf",
+      }),
+      "historical_procurement_disclosure",
     );
   });
 });

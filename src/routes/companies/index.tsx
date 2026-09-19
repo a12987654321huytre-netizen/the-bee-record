@@ -4,6 +4,7 @@ import { Button, EmptyState, Input, Select } from "@/components/ui";
 import { DateCell, LevelCell, LifecycleBadge, Pagination } from "@/components/meta";
 import { getCompanyDirectory } from "@/lib/bee/public.functions";
 import { companyInterpretation } from "@/lib/bee/disclosure";
+import { isModernProcurementEvidence } from "@/lib/bee/recency";
 
 type Search = {
   q?: string;
@@ -33,11 +34,22 @@ function rowState(row: {
   lifecycle_state: string | null;
   current_evidence_type?: string | null;
   has_disclosure?: boolean | number | string | null;
+  disclosure_date?: string | null;
+  disclosure_url?: string | null;
+  disclosure_title?: string | null;
 }) {
+  const hasDisclosure = Boolean(row.has_disclosure);
   return companyInterpretation({
     currentLifecycle: row.lifecycle_state,
     currentEvidenceType: row.current_evidence_type ?? null,
-    hasDisclosure: Boolean(row.has_disclosure),
+    hasDisclosure,
+    disclosureModern: hasDisclosure
+      ? isModernProcurementEvidence({
+          issueDate: row.disclosure_date,
+          sourceUrl: row.disclosure_url,
+          title: row.disclosure_title,
+        })
+      : null,
   });
 }
 

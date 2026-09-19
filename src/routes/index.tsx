@@ -1,9 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { PublicShell } from "@/components/public-shell";
 import { Button, EmptyState, Input } from "@/components/ui";
-import { DateCell, LevelCell, LifecycleBadge } from "@/components/meta";
-import { APP_TAGLINE } from "@/lib/bee/constants";
+import { DateCell, CompanySummary, LifecycleBadge, EvidenceTypeLabel } from "@/components/meta";
+import { APP_TAGLINE, INTERPRETATION_LABELS } from "@/lib/bee/constants";
 import { getHomeData } from "@/lib/bee/public.functions";
+import { disclosureInterpretation } from "@/lib/bee/disclosure";
+import { isModernProcurementEvidence, evidenceYearLabel } from "@/lib/bee/recency";
 import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
@@ -72,7 +74,22 @@ function Home() {
                     {row.canonical_name}
                   </Link>
                   <span className="text-sm text-muted">
-                    <LevelCell level={row.bee_level} />
+                    <CompanySummary
+                      currentLifecycle={row.lifecycle_state}
+                      currentEvidenceType={row.current_evidence_type}
+                      hasDisclosure={Boolean(row.has_disclosure)}
+                      disclosureModern={
+                        row.has_disclosure
+                          ? isModernProcurementEvidence({
+                              issueDate: row.disclosure_date,
+                              sourceUrl: row.disclosure_url,
+                              title: row.disclosure_title,
+                            })
+                          : null
+                      }
+                      beeLevel={row.bee_level}
+                      disclosureLevel={row.disclosure_level}
+                    />
                   </span>
                 </li>
               ))}
@@ -84,27 +101,44 @@ function Home() {
             />
           )}
 
-          <HeaderLink title="Recently indexed evidence" to="/updates" className="mt-10" />
+          <HeaderLink title="Recently added to the index" to="/updates" className="mt-10" />
           {data.recent.evidence.length ? (
             <ul className="divide-y divide-rule border-t border-rule">
-              {data.recent.evidence.map((row) => (
-                <li key={row.id} className="py-3">
-                  <Link to="/evidence/$id" params={{ id: row.id }} className="hover:underline">
-                    {row.title ?? row.id}
-                  </Link>
-                  <p className="text-sm text-muted">
-                    {row.entity_name ? (
-                      <Link to="/companies/$slug" params={{ slug: row.entity_slug ?? "" }} className="hover:underline">
-                        {row.entity_name}
-                      </Link>
-                    ) : (
-                      "Unlinked"
-                    )}
-                    {" · "}
-                    <DateCell value={row.issue_date} />
-                  </p>
-                </li>
-              ))}
+              {data.recent.evidence.map((row) => {
+                const interpretation = disclosureInterpretation({
+                  evidenceType: row.evidence_type,
+                  lifecycle: row.lifecycle_state,
+                  issueDate: row.issue_date,
+                  sourceUrl: row.source_url,
+                  title: row.title,
+                });
+                const year = evidenceYearLabel({
+                  issueDate: row.issue_date,
+                  sourceUrl: row.source_url,
+                  title: row.title,
+                });
+                return (
+                  <li key={row.id} className="py-3">
+                    <Link to="/evidence/$id" params={{ id: row.id }} className="hover:underline">
+                      {row.title ?? row.id}
+                    </Link>
+                    <p className="text-sm text-muted">
+                      {row.entity_name ? (
+                        <Link to="/companies/$slug" params={{ slug: row.entity_slug ?? "" }} className="hover:underline">
+                          {row.entity_name}
+                        </Link>
+                      ) : (
+                        "Unlinked"
+                      )}
+                      {" · "}
+                      <EvidenceTypeLabel type={row.evidence_type} />
+                      {" · "}
+                      {INTERPRETATION_LABELS[interpretation] ?? interpretation}
+                      {year ? ` · ${year}` : null}
+                    </p>
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <EmptyState title="No evidence has been published yet." />

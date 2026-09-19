@@ -2,6 +2,7 @@ import { collapseWhitespace, fold, normalizeName } from "./normalize.ts";
 import { sha256HexNode } from "./hash.ts";
 import { isDisclosureEvidence, isStatusEvidence } from "./constants.ts";
 import { displayBeeLevel } from "./level.ts";
+import { disclosureIsHistorical } from "./recency.ts";
 
 const JV_RE =
   /\b(jv|j\/v|joint\s+ventures?|consortium|consortia|and\s+associates\s+jv)\b/i;
@@ -197,10 +198,18 @@ export function procurementIdentityHash(input: {
 export function disclosureInterpretation(input: {
   evidenceType?: string | null;
   lifecycle?: string | null;
+  issueDate?: string | Date | null;
+  sourceUrl?: string | null;
+  title?: string | null;
 }): string {
   if (isDisclosureEvidence(input.evidenceType)) {
-    if (input.lifecycle === "historical") return "historical_procurement_disclosure";
-    return "official_dated_disclosure";
+    return disclosureIsHistorical({
+      issueDate: input.issueDate,
+      sourceUrl: input.sourceUrl,
+      title: input.title,
+    })
+      ? "historical_procurement_disclosure"
+      : "official_dated_disclosure";
   }
   if (input.lifecycle === "current") return "current_certificate";
   if (input.lifecycle === "expiring_soon") return "expiring_soon";
@@ -214,8 +223,10 @@ export function companyInterpretation(input: {
   currentLifecycle?: string | null;
   currentEvidenceType?: string | null;
   hasDisclosure?: boolean;
+  disclosureModern?: boolean | null;
 }): string {
   if (input.currentEvidenceType && isDisclosureEvidence(input.currentEvidenceType)) {
+    if (input.disclosureModern === false) return "historical_procurement_disclosure";
     return input.hasDisclosure ? "official_dated_disclosure" : "no_current_certificate";
   }
   if (input.currentLifecycle === "current") return "current_certificate";
@@ -223,7 +234,11 @@ export function companyInterpretation(input: {
   if (input.currentLifecycle === "unknown_validity") return "validity_unconfirmed";
   if (input.currentLifecycle === "expired") return "expired_certificate";
   if (input.currentLifecycle === "disputed") return "disputed";
-  if (input.hasDisclosure) return "official_dated_disclosure";
+  if (input.hasDisclosure) {
+    return input.disclosureModern === false
+      ? "historical_procurement_disclosure"
+      : "official_dated_disclosure";
+  }
   if (input.currentLifecycle === "historical" || input.currentLifecycle === "superseded") {
     return "historical_certificate";
   }
@@ -236,4 +251,51 @@ export function reportedLevelLabel(level: string | null | undefined): string {
 
 export function isCertificateClassEvidence(type: string | null | undefined): boolean {
   return isStatusEvidence(type) || (!isDisclosureEvidence(type) && Boolean(type));
+}
+
+export type CompanySummaryInput = {
+  currentLifecycle?: string | null;
+  currentEvidenceType?: string | null;
+  hasDisclosure?: boolean;
+  disclosureModern?: boolean | null;
+  beeLevel?: string | null;
+  disclosureLevel?: string | null;
+};
+
+export function companySummaryText(input: CompanySummaryInput): string {
+  const interpretation = companyInterpretation({
+    currentLifecycle: input.currentLifecycle,
+    currentEvidenceType: input.currentEvidenceType,
+    hasDisclosure: input.hasDisclosure,
+    disclosureModern: input.disclosureModern,
+  });
+  const certLevel = displayBeeLevel(input.beeLevel);
+  const disclosureLevel = displayBeeLevel(input.disclosureLevel ?? null);
+
+  if (interpretation === "current_certificate") {
+    return certLevel ? `${certLevel} · Current certificate` : "Current certificate";
+  }
+  if (interpretation === "expiring_soon") {
+    return certLevel ? `${certLevel} · Expiring soon` : "Expiring soon";
+  }
+  if (interpretation === "validity_unconfirmed") {
+    return certLevel ? `${certLevel} · Validity unconfirmed` : "Validity unconfirmed";
+  }
+  if (interpretation === "expired_certificate") {
+    return certLevel ? `${certLevel} · Expired certificate` : "Expired certificate";
+  }
+  if (interpretation === "historical_certificate") {
+    return certLevel ? `${certLevel} · Historical certificate` : "Historical certificate";
+  }
+  if (interpretation === "disputed") return "Disputed";
+  if (interpretation === "official_dated_disclosure") {
+    return disclosureLevel ? `Official disclosure · ${disclosureLevel}` : "Official procurement disclosure";
+  }
+  if (interpretation === "historical_procurement_disclosure") {
+    return disclosureLevel ? `Historical disclosure · ${disclosureLevel}` : "Historical procurement disclosure";
+  }
+  if (input.hasDisclosure) {
+    return disclosureLevel ? `Official disclosure · ${disclosureLevel}` : "Official procurement disclosure";
+  }
+  return "No current certificate in corpus";
 }

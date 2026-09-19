@@ -17,6 +17,7 @@ import {
   isMalformedCompanyName,
   procurementIdentityHash,
 } from "./disclosure.ts";
+import { procurementQualifiesForPublicEntity } from "./recency.ts";
 import type { Sql } from "./db-types.ts";
 import type { ExtractionClaim } from "./types.ts";
 
@@ -497,6 +498,23 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
     canonicalName: name,
     registrationNumber: item.registrationNumber,
   });
+  const procurementRows = item.procurement ?? [];
+  const procurementModern = procurementQualifiesForPublicEntity(
+    procurementRows.map((row) => ({
+      awardDate: row.awardDate,
+      sourceUrl: row.sourceUrl,
+      title: row.sourceTitle ?? row.tenderNumber,
+    })),
+  );
+  const hasCertificateEvidence = Boolean(item.evidence?.length);
+  if (!existing && procurementRows.length && !hasCertificateEvidence && !procurementModern) {
+    result.skipped = true;
+    result.skipReason = "pre_2024_procurement";
+    result.error =
+      "Procurement evidence is older than 1 January 2024 and cannot create a public company page.";
+    return result;
+  }
+
   let entityId: string;
   if (existing) {
     entityId = existing.id;
@@ -731,10 +749,13 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
   }
 
   if (result.published) {
-    await db.query(
-      "update entities set visibility = 'public', updated_at = now() where id = $1 and visibility = 'draft'",
-      [entityId],
-    );
+    const canPublicize = hasCertificateEvidence || !procurementRows.length || procurementModern;
+    if (canPublicize) {
+      await db.query(
+        "update entities set visibility = 'public', updated_at = now() where id = $1 and visibility in ('draft', 'hidden')",
+        [entityId],
+      );
+    }
   }
 
   return result;

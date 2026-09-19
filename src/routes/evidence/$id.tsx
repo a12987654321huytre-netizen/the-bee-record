@@ -20,6 +20,7 @@ import {
   type LinkedEntityHint,
 } from "@/lib/bee/claim-quality.ts";
 import { disclosureInterpretation } from "@/lib/bee/disclosure";
+import { evidenceYearLabel } from "@/lib/bee/recency";
 import { getEvidencePage } from "@/lib/bee/public.functions";
 
 export const Route = createFileRoute("/evidence/$id")({
@@ -69,7 +70,13 @@ function EvidencePage() {
     : claimValue("signatory");
   const disclosure = isDisclosureEvidence(evidence.evidence_type);
   const statusLabel = disclosure
-    ? disclosureInterpretation({ evidenceType: evidence.evidence_type, lifecycle: evidence.lifecycle_state })
+    ? disclosureInterpretation({
+        evidenceType: evidence.evidence_type,
+        lifecycle: evidence.lifecycle_state,
+        issueDate: evidence.issue_date,
+        sourceUrl: evidence.source_url,
+        title: evidence.title,
+      })
     : evidence.lifecycle_state;
 
   return (
@@ -107,7 +114,18 @@ function EvidencePage() {
           />
           <Field label="Evidence type" value={<EvidenceTypeLabel type={evidence.evidence_type} />} />
           <Field label={disclosure ? "Evidence date" : "Issue date"} value={<DateCell value={evidence.issue_date} />} />
-          {disclosure ? null : <Field label="Expiry date" value={<DateCell value={evidence.expiry_date} />} />}
+          {disclosure ? (
+            <Field
+              label="Source year"
+              value={evidenceYearLabel({
+                issueDate: evidence.issue_date,
+                sourceUrl: evidence.source_url,
+                title: evidence.title,
+              }) ?? displayOrUnknown(null)}
+            />
+          ) : (
+            <Field label="Expiry date" value={<DateCell value={evidence.expiry_date} />} />
+          )}
           <Field label="Evidence status" value={<LifecycleBadge state={statusLabel} />} />
           {disclosure ? (
             <Field label="Government institution" value={displayOrUnknown(claimValue("government_institution") ?? evidence.document_issuer)} />
