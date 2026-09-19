@@ -1,14 +1,16 @@
 import { createFileRoute, Link, useRouter, useRouteContext } from "@tanstack/react-router";
 import { Button, EmptyState, Input, Select } from "@/components/ui";
 import { createCompanyFn, listAdminCompanies } from "@/lib/bee/admin.functions";
+import { ADMIN_QUEUE_LABELS, ADMIN_QUEUES } from "@/lib/bee/enrichment";
 import { formatWhen } from "@/lib/bee/format";
 import { useState } from "react";
 
 export const Route = createFileRoute("/admin/companies/")({
-  validateSearch: (s: Record<string, unknown>): { q?: string; visibility?: string; page?: number } => ({
+  validateSearch: (s: Record<string, unknown>): { q?: string; visibility?: string; page?: number; queue?: string } => ({
     q: typeof s.q === "string" && s.q ? s.q : undefined,
     visibility: typeof s.visibility === "string" && s.visibility ? s.visibility : undefined,
     page: s.page != null && s.page !== "" ? Number(s.page) || 1 : undefined,
+    queue: typeof s.queue === "string" && s.queue ? s.queue : undefined,
   }),
   loaderDeps: ({ search }) => search,
   loader: ({ deps }) => listAdminCompanies({ data: deps }),
@@ -26,6 +28,7 @@ function Companies() {
   return (
     <div>
       <h1 className="font-display text-3xl">Companies</h1>
+      <p className="mt-1 text-sm text-muted">{data.total} matching {data.total === 1 ? "company" : "companies"}.</p>
       <form className="mt-4 flex flex-wrap gap-2">
         <Input name="q" defaultValue={search.q} placeholder="Name or registration" aria-label="Search" className="max-w-xs" />
         <Select name="visibility" defaultValue={search.visibility} aria-label="Visibility" className="max-w-40">
@@ -33,6 +36,14 @@ function Companies() {
           <option value="draft">Draft</option>
           <option value="public">Public</option>
           <option value="hidden">Hidden</option>
+        </Select>
+        <Select name="queue" defaultValue={search.queue} aria-label="Research queue" className="max-w-56">
+          <option value="">Any research queue</option>
+          {ADMIN_QUEUES.map((q) => (
+            <option key={q} value={q}>
+              {ADMIN_QUEUE_LABELS[q]}
+            </option>
+          ))}
         </Select>
         <Button type="submit" variant="ghost">
           Filter

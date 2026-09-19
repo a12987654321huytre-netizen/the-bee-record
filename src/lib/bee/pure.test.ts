@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseDate, expiryStatus } from "./dates.ts";
 import { parseExtractionJson, parseExtractionText } from "./extraction-schema.ts";
-import { extractDeterministically } from "./deterministic-extract.ts";
+import { extractDeterministically, inferEvidenceTypeFromUrl } from "./deterministic-extract.ts";
+import { enrichmentPriorityScore, formatZaRegistration, isZaCompanyRegistration, queuePredicate } from "./enrichment.ts";
 import { canonicalFieldKey, isPlausibleEntityName, isPlausibleSignatory, publicLocator } from "./claim-quality.ts";
 import { classifyPublishedEvidence, mergeRepairClaims } from "./lifecycle.ts";
 import { normalizeBeeLevel } from "./level.ts";
@@ -54,6 +55,60 @@ describe("normalization", () => {
   it("normalizes B-BBEE levels", () => {
     assert.equal(normalizeBeeLevel("Level Three Contributor"), "3");
     assert.equal(normalizeBeeLevel("Non-Compliant"), "non-compliant");
+  });
+  it("accepts CIPC registration numbers and rejects CSD-style values", () => {
+    assert.equal(isZaCompanyRegistration("1986/003934/06"), true);
+    assert.equal(formatZaRegistration("198600393406"), "1986/003934/06");
+    assert.equal(isZaCompanyRegistration("MAAA0123456"), false);
+    assert.equal(isZaCompanyRegistration("123"), false);
+  });
+});
+
+describe("enrichment", () => {
+  it("scores certificate research higher for JSE procurement-only companies", () => {
+    const high = enrichmentPriorityScore({
+      evidenceCount: 6,
+      procurementCount: 4,
+      institutionCount: 3,
+      latestProcurementYear: 2026,
+      hasWebsite: true,
+      hasRegistration: false,
+      hasCertificate: false,
+      hasCurrentCertificate: false,
+      jseListed: true,
+      isGroup: true,
+      hasParent: false,
+    });
+    const low = enrichmentPriorityScore({
+      evidenceCount: 1,
+      procurementCount: 1,
+      institutionCount: 1,
+      latestProcurementYear: 2024,
+      hasWebsite: false,
+      hasRegistration: false,
+      hasCertificate: false,
+      hasCurrentCertificate: false,
+      jseListed: false,
+      isGroup: false,
+      hasParent: false,
+    });
+    assert.ok(high > low);
+    assert.ok(high > 80);
+  });
+  it("builds SQL predicates for admin research queues", () => {
+    assert.ok(queuePredicate("no_registration")?.includes("registration_number"));
+    assert.equal(queuePredicate("not-a-queue"), null);
+  });
+  it("infers certificate types from official URLs", () => {
+    assert.equal(
+      inferEvidenceTypeFromUrl("https://www.absa.co.za/content/dam/south-africa/absa/pdf/2020/Absa-Group-B-BBEE-certificate.pdf"),
+      "bee_certificate",
+    );
+    assert.equal(
+      inferEvidenceTypeFromUrl("https://example.com/files/sworn-affidavit-b-bbee.pdf", "Sworn affidavit"),
+      "sworn_affidavit",
+    );
+    assert.equal(inferEvidenceTypeFromUrl("https://example.com/about"), "other");
   });
 });
 

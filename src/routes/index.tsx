@@ -149,7 +149,7 @@ function Home() {
           <section>
             <HeaderLink title="Sectors" to="/companies" />
             <ul className="divide-y divide-rule border-t border-rule text-sm">
-              {data.sectors.map((s) => (
+              {data.sectors.filter((s) => s.n > 0).map((s) => (
                 <li key={s.slug} className="flex justify-between py-2">
                   <Link to="/sectors/$slug" params={{ slug: s.slug }} className="hover:underline">
                     {s.name}

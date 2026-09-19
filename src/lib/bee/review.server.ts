@@ -133,3 +133,40 @@ export async function deferReview(
     [input.reviewItemId, input.actorId, input.notes ?? null],
   );
 }
+
+export async function closeReview(
+  db: Sql,
+  input: {
+    reviewItemId: string;
+    actorId: string;
+    status: "approved" | "rejected" | "deferred";
+    resolution: string;
+  },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const items = await db.query<{
+    id: string;
+    status: string;
+    evidence_id: string | null;
+  }>("select id, status, evidence_id from review_items where id = $1", [input.reviewItemId]);
+  const item = items[0];
+  if (!item) return { ok: false, error: "Review item not found." };
+  if (item.status !== "pending" && item.status !== "in_review") {
+    return { ok: false, error: "Review item is no longer open." };
+  }
+  await db.query(
+    `update review_items
+     set status = $2, reviewer_id = $3, resolved_at = now(), resolution = $4, notes = $4, updated_at = now()
+     where id = $1`,
+    [input.reviewItemId, input.status, input.actorId, input.resolution],
+  );
+  await audit(db, {
+    actorType: "admin",
+    actorId: input.actorId,
+    action: `review.${input.status}`,
+    targetType: "review_item",
+    targetId: input.reviewItemId,
+    reason: input.resolution,
+    evidenceId: item.evidence_id,
+  });
+  return { ok: true };
+}

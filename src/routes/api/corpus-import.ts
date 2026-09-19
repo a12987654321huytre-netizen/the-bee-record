@@ -18,6 +18,19 @@ import {
   sanitizeEvidenceBatch,
   ensureUnknownValidityConstraint,
 } from "@/lib/bee/repair.server";
+import {
+  applyIdentityBatch,
+  applySectorsBatch,
+  auditEnrichment,
+  closeStalePublishedReviews,
+  closeSucceededExtractionReviews,
+  copyRegistrationFromCertificateClaims,
+  ensureCompanyWebsiteSources,
+  ensureExtraSectors,
+  listPriorityQueue,
+  mergeNormalizedDuplicates,
+  rejectJunkReviews,
+} from "@/lib/bee/enrichment.server";
 import { sql } from "@/lib/bee/sql.server";
 
 const evidenceSchema = z.object({
@@ -64,16 +77,39 @@ const itemSchema = z.object({
 });
 
 const bodySchema = z.object({
-  action: z.enum(["import", "crawl", "stats", "retry", "repair", "recency"]).optional(),
+  action: z.enum(["import", "crawl", "stats", "retry", "repair", "recency", "enrich"]).optional(),
   items: z.array(itemSchema).min(1).max(25).optional(),
   crawlLimit: z.number().int().min(1).max(8).optional(),
   retryLimit: z.number().int().min(1).max(12).optional(),
   repairLimit: z.number().int().min(1).max(12).optional(),
-  phase: z.enum(["extract", "lifecycle", "reset", "cleanup", "sanitize", "schema", "audit", "unpublish"]).optional(),
+  phase: z
+    .enum([
+      "extract",
+      "lifecycle",
+      "reset",
+      "cleanup",
+      "sanitize",
+      "schema",
+      "audit",
+      "unpublish",
+      "close-stale-reviews",
+      "close-extraction",
+      "copy-regs",
+      "merge-dupes",
+      "identity",
+      "sectors",
+      "ensure-sectors",
+      "queue",
+      "reject-junk",
+      "monitors",
+    ])
+    .optional(),
   afterId: z.string().nullable().optional(),
   sourceId: z.string().optional(),
   dryRun: z.boolean().optional(),
   recencyLimit: z.number().int().min(1).max(1500).optional(),
+  enrichLimit: z.number().int().min(1).max(200).optional(),
+  queue: z.string().optional(),
 });
 
 async function stats(db: Awaited<ReturnType<typeof sql>>) {
@@ -102,6 +138,78 @@ export const Route = createFileRoute("/api/corpus-import")({
         const action = parsed.data.action ?? "import";
         if (action === "stats") {
           return Response.json(await stats(db));
+        }
+        if (action === "enrich") {
+          const phase = parsed.data.phase ?? "audit";
+          const limit = parsed.data.enrichLimit;
+          const dryRun = parsed.data.dryRun ?? false;
+          try {
+            if (phase === "close-stale-reviews") {
+              const out = await closeStalePublishedReviews(db, { limit, dryRun });
+              return Response.json({ ...(await stats(db)), phase, ...out });
+            }
+            if (phase === "close-extraction") {
+              const out = await closeSucceededExtractionReviews(db, { limit, dryRun });
+              return Response.json({ ...(await stats(db)), phase, ...out });
+            }
+            if (phase === "reject-junk") {
+              const out = await rejectJunkReviews(db, { limit, dryRun });
+              return Response.json({ ...(await stats(db)), phase, ...out });
+            }
+            if (phase === "copy-regs") {
+              const out = await copyRegistrationFromCertificateClaims(db, { limit, dryRun });
+              return Response.json({ ...(await stats(db)), phase, ...out });
+            }
+            if (phase === "merge-dupes") {
+              const out = await mergeNormalizedDuplicates(db, { limit, dryRun });
+              return Response.json({ ...(await stats(db)), phase, ...out });
+            }
+            if (phase === "ensure-sectors") {
+              const out = await ensureExtraSectors(db);
+              return Response.json({ ...(await stats(db)), phase, ...out });
+            }
+            if (phase === "identity") {
+              if (!parsed.data.items?.length) {
+                return Response.json({ ok: false, error: "items required for identity." }, { status: 400 });
+              }
+              const out = await applyIdentityBatch(db, parsed.data.items);
+              return Response.json({ ...(await stats(db)), phase, ...out });
+            }
+            if (phase === "sectors") {
+              if (!parsed.data.items?.length) {
+                return Response.json({ ok: false, error: "items required for sectors." }, { status: 400 });
+              }
+              const out = await applySectorsBatch(
+                db,
+                parsed.data.items.map((it) => ({
+                  canonicalName: it.canonicalName,
+                  sectorIds: it.sectorIds ?? [],
+                })),
+              );
+              return Response.json({ ...(await stats(db)), phase, ...out });
+            }
+            if (phase === "monitors") {
+              const out = await ensureCompanyWebsiteSources(db, { limit, dryRun });
+              return Response.json({ ...(await stats(db)), phase, ...out });
+            }
+            if (phase === "queue") {
+              const out = await listPriorityQueue(db, parsed.data.queue ?? "certificate_enrichment", limit ?? 40);
+              return Response.json({ ok: true, phase, ...out });
+            }
+            return Response.json(await auditEnrichment(db));
+          } catch (err) {
+            const e = err as { message?: string; code?: string; detail?: string };
+            return Response.json(
+              {
+                ok: false,
+                error: e?.message ?? String(err),
+                code: e?.code ?? null,
+                detail: e?.detail ?? null,
+                phase,
+              },
+              { status: 500 },
+            );
+          }
         }
         if (action === "recency") {
           const phase = parsed.data.phase ?? "audit";

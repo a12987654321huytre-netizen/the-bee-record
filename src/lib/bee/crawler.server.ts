@@ -1,5 +1,5 @@
 import { audit } from "./audit.server.ts";
-import { looksLikeEvidence } from "./deterministic-extract.ts";
+import { looksLikeEvidence, inferEvidenceTypeFromUrl } from "./deterministic-extract.ts";
 import { safeFetch } from "./fetch.server.ts";
 import { sha256HexNode } from "./hash.ts";
 import { newId } from "./ids.ts";
@@ -264,7 +264,7 @@ export async function runSourceCheck(
         actorId: actor.id,
         jobId,
         sourceId,
-        evidenceType: "other",
+        evidenceType: inferEvidenceTypeFromUrl(candidate.url, candidate.title),
       });
       if (result.duplicate) {
         await jobEvent(db, jobId, "info", `Duplicate document at ${candidate.url}`, { evidenceId: result.evidenceId });

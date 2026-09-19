@@ -38,6 +38,7 @@ import { sql, withTransaction } from "./sql.server.ts";
 import { checkFetchUrl } from "./ssrf.ts";
 import { slugify, normalizeName } from "./normalize.ts";
 import { uniqueSlug } from "./db-types.ts";
+import { ADMIN_QUEUES, queuePredicate } from "./enrichment.ts";
 
 function noStore() {
   setResponseHeader("cache-control", "no-store");
@@ -125,6 +126,42 @@ export const getDashboard = createServerFn({ method: "GET" }).handler(async () =
   const pendingReview = await db.query<{ id: string; type: string; reason: string; generated_at: string }>(
     "select id, type, reason, generated_at from review_items where status = 'pending' order by generated_at desc limit 10",
   );
+  const completeness = {
+    noRegistration: await q(
+      `select count(*)::int as n from entities e
+       where e.visibility = 'public' and e.merged_into_id is null
+         and (e.registration_number is null or btrim(e.registration_number) = '')`,
+    ),
+    noSector: await q(
+      `select count(*)::int as n from entities e
+       where e.visibility = 'public' and e.merged_into_id is null
+         and not exists (select 1 from entity_classifications c where c.entity_id = e.id)`,
+    ),
+    noWebsite: await q(
+      `select count(*)::int as n from entities e
+       where e.visibility = 'public' and e.merged_into_id is null
+         and (e.website is null or btrim(e.website) = '')`,
+    ),
+    procurementOnly: await q(
+      `select count(*)::int as n from entities e
+       where e.visibility = 'public' and e.merged_into_id is null
+         and exists (
+           select 1 from evidence_entity_links l join evidence ev on ev.id = l.evidence_id
+           where l.entity_id = e.id and ev.publication_state = 'published'
+             and ev.evidence_type = 'government_procurement_disclosure'
+         )
+         and not exists (
+           select 1 from evidence_entity_links l join evidence ev on ev.id = l.evidence_id
+           where l.entity_id = e.id and ev.publication_state = 'published'
+             and ev.evidence_type in ('bee_certificate','sworn_affidavit')
+         )`,
+    ),
+    noMonitoredSource: await q(
+      `select count(*)::int as n from entities e
+       where e.visibility = 'public' and e.merged_into_id is null
+         and not exists (select 1 from monitored_sources s where s.entity_id = e.id)`,
+    ),
+  };
   return {
     counts: { tracked, visible, sources, evidence, current, historical, expired, expiring, unknownValidity, review, matches, submissions, verifiers },
     period: period[0] ?? {
@@ -139,12 +176,20 @@ export const getDashboard = createServerFn({ method: "GET" }).handler(async () =
     staleSources,
     upcoming,
     pendingReview,
+    completeness,
     aiConfigured: aiConfigured(),
   };
 });
 
 export const listAdminCompanies = createServerFn({ method: "GET" })
-  .validator(z.object({ q: z.string().optional(), page: z.coerce.number().optional(), visibility: z.string().optional() }))
+  .validator(
+    z.object({
+      q: z.string().optional(),
+      page: z.coerce.number().optional(),
+      visibility: z.string().optional(),
+      queue: z.string().optional(),
+    }),
+  )
   .handler(async ({ data }) => {
     noStore();
     await requireAdmin();
@@ -152,17 +197,21 @@ export const listAdminCompanies = createServerFn({ method: "GET" })
     const page = Math.max(1, data.page ?? 1);
     const pageSize = 30;
     const params: unknown[] = [];
-    const where = ["merged_into_id is null"];
+    const where = ["e.merged_into_id is null"];
     if (data.q?.trim()) {
       params.push(`%${data.q.trim()}%`);
-      where.push(`(canonical_name ilike $${params.length} or registration_number ilike $${params.length})`);
+      where.push(`(e.canonical_name ilike $${params.length} or e.registration_number ilike $${params.length})`);
     }
     if (data.visibility) {
       params.push(data.visibility);
-      where.push(`visibility = $${params.length}`);
+      where.push(`e.visibility = $${params.length}`);
+    }
+    if (data.queue && (ADMIN_QUEUES as readonly string[]).includes(data.queue)) {
+      const pred = queuePredicate(data.queue);
+      if (pred) where.push(pred);
     }
     const total = (
-      await db.query<{ n: number }>(`select count(*)::int as n from entities where ${where.join(" and ")}`, params)
+      await db.query<{ n: number }>(`select count(*)::int as n from entities e where ${where.join(" and ")}`, params)
     )[0]?.n ?? 0;
     params.push(pageSize, (page - 1) * pageSize);
     const items = await db.query<{
@@ -174,9 +223,9 @@ export const listAdminCompanies = createServerFn({ method: "GET" })
       registration_number: string | null;
       updated_at: string;
     }>(
-      `select id, slug, canonical_name, visibility, automation_state, registration_number, updated_at
-       from entities where ${where.join(" and ")}
-       order by updated_at desc
+      `select e.id, e.slug, e.canonical_name, e.visibility, e.automation_state, e.registration_number, e.updated_at
+       from entities e where ${where.join(" and ")}
+       order by e.updated_at desc
        limit $${params.length - 1} offset $${params.length}`,
       params,
     );

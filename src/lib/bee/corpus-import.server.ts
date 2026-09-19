@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import { addAlias, createEntity, createRelationship, setClassification } from "./entities.server.ts";
+import { addAlias, createEntity, createRelationship, setClassification, updateEntity } from "./entities.server.ts";
 import { sha256HexNode } from "./hash.ts";
 import { ingestDocument, rerunExtraction } from "./pipeline.server.ts";
 import { persistExtraction } from "./extract.server.ts";
@@ -7,6 +7,7 @@ import { createSource } from "./crawler.server.ts";
 import { getExpiringSoonDays } from "./settings.server.ts";
 import { publishEvidence } from "./publication.server.ts";
 import { extractDomain, normalizeName, normalizeRegistration } from "./normalize.ts";
+import { formatZaRegistration, isZaCompanyRegistration } from "./enrichment.ts";
 import { newId } from "./ids.ts";
 import { normalizeBeeLevel } from "./level.ts";
 import { PARSER_PROCUREMENT } from "./constants.ts";
@@ -145,6 +146,67 @@ async function findExistingEntity(
 async function findParentId(db: Sql, parentName: string): Promise<string | null> {
   const found = await findExistingEntity(db, { canonicalName: parentName });
   return found?.id ?? null;
+}
+
+async function fillMissingIdentity(db: Sql, entityId: string, item: CorpusItem): Promise<void> {
+  const rows = await db.query<{
+    registration_number: string | null;
+    website: string | null;
+    legal_name: string | null;
+    trading_name: string | null;
+  }>("select registration_number, website, legal_name, trading_name from entities where id = $1", [entityId]);
+  const existing = rows[0];
+  if (!existing) return;
+  const patch: {
+    id: string;
+    actorId: string;
+    registrationNumber?: string;
+    website?: string;
+    legalName?: string;
+    tradingName?: string;
+  } = { id: entityId, actorId: ACTOR };
+  let changed = false;
+  if (!existing.registration_number && item.registrationNumber && isZaCompanyRegistration(item.registrationNumber)) {
+    const formatted = formatZaRegistration(item.registrationNumber);
+    if (formatted) {
+      const clash = await db.query<{ id: string }>(
+        `select id from entities
+         where registration_number_normalized = $1 and id <> $2 and merged_into_id is null
+         limit 1`,
+        [normalizeRegistration(formatted), entityId],
+      );
+      if (!clash[0]) {
+        patch.registrationNumber = formatted;
+        changed = true;
+      }
+    }
+  }
+  if (!existing.website && item.website) {
+    try {
+      const u = new URL(item.website);
+      if (u.protocol === "http:" || u.protocol === "https:") {
+        patch.website = item.website;
+        changed = true;
+      }
+    } catch {
+      /* skip */
+    }
+  }
+  if (!existing.legal_name && item.legalName?.trim()) {
+    patch.legalName = item.legalName.trim();
+    changed = true;
+  }
+  if (!existing.trading_name && item.tradingName?.trim()) {
+    patch.tradingName = item.tradingName.trim();
+    changed = true;
+  }
+  if (changed) {
+    try {
+      await updateEntity(db, patch);
+    } catch {
+      /* unique registration or concurrent edit — leave as-is */
+    }
+  }
 }
 
 function claim(
@@ -520,6 +582,7 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
     entityId = existing.id;
     result.duplicateEntity = true;
     result.entityId = entityId;
+    await fillMissingIdentity(db, entityId, item);
   } else {
     try {
       const created = await createEntity(db, {
@@ -549,6 +612,7 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
       entityId = again.id;
       result.duplicateEntity = true;
       result.entityId = entityId;
+      await fillMissingIdentity(db, entityId, item);
     }
   }
 

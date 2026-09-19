@@ -55,6 +55,16 @@ function Dashboard() {
         <Metric label="Crawler failures (7d)" value={data.period.crawler_fail} />
       </dl>
 
+      <h2 className="mt-10 font-display text-xl">Completeness</h2>
+      <p className="mt-1 text-sm text-muted">Public companies missing identity or evidence depth. Use the companies research queues to work these.</p>
+      <dl className="mt-4 grid grid-cols-2 gap-px bg-rule md:grid-cols-5">
+        <Metric label="No registration" value={data.completeness.noRegistration} />
+        <Metric label="No sector" value={data.completeness.noSector} />
+        <Metric label="No website" value={data.completeness.noWebsite} />
+        <Metric label="Procurement only" value={data.completeness.procurementOnly} />
+        <Metric label="No monitored source" value={data.completeness.noMonitoredSource} />
+      </dl>
+
       <div className="mt-4 flex flex-wrap gap-2">
         <Button variant="ghost" onClick={() => run("expiry")}>
           Recalculate expiries

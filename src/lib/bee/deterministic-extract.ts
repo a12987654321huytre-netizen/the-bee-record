@@ -430,6 +430,10 @@ export const DOCUMENT_HINTS = [
   "supplier",
   "procurement",
   "sustainability",
+  "scorecard",
+  "form b-bbee",
+  "compliance report",
+  "bee certificate",
 ];
 
 export function looksLikeEvidence(input: { url: string; text?: string; mime?: string }): number {
@@ -440,6 +444,30 @@ export function looksLikeEvidence(input: { url: string; text?: string; mime?: st
   }
   if (/\.pdf($|\?)/i.test(input.url) || input.mime === "application/pdf") score += 2;
   return score;
+}
+
+/** Infer a document type from URL/filename/title. Conservative — unknown stays other. */
+export function inferEvidenceTypeFromUrl(url: string, title?: string | null): string {
+  const blob = `${url} ${title ?? ""}`.toLowerCase();
+  if (/sworn\s+affidavit|\baffidavit\b/.test(blob) && /b-?bbee|bbbee|\bbee\b/.test(blob)) {
+    return "sworn_affidavit";
+  }
+  if (/form\s*b-?bbee\s*1|b-?bbee\s+compliance\s+report/.test(blob)) return "transformation_report";
+  if (/integrated[_\s-]?report/.test(blob)) return "integrated_report";
+  if (/annual[_\s-]?report/.test(blob)) return "annual_report";
+  if (/sustainability[_\s-]?report/.test(blob)) return "sustainability_report";
+  if (/transformation/.test(blob) && /b-?bbee|bbbee|\bbee\b/.test(blob)) return "transformation_report";
+  if (
+    /(b-?bbee|bbbee|bee).{0,48}(certificate|cert\b)/.test(blob) ||
+    /(certificate|cert\b).{0,48}(b-?bbee|bbbee)/.test(blob)
+  ) {
+    return "bee_certificate";
+  }
+  if (/\.pdf($|\?)/i.test(url) && /\bb-?bbee\b|\bbbbee\b/.test(blob)) return "bee_certificate";
+  if (/procurement/.test(blob)) return "procurement_page";
+  if (/supplier/.test(blob)) return "supplier_page";
+  if (/investor/.test(blob)) return "investor_document";
+  return "other";
 }
 
 export { KNOWN_AGENCIES, extractBva };
