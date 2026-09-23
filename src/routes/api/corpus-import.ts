@@ -114,6 +114,7 @@ const bodySchema = z.object({
       "reject-junk",
       "monitors",
       "dates",
+      "republish",
     ])
     .optional(),
   afterId: z.string().nullable().optional(),
