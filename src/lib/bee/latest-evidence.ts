@@ -26,6 +26,7 @@ export type LatestEvidenceKind =
   | "historical_certificate"
   | "historical_procurement_disclosure"
   | "historical_disclosure"
+  | "official_undated"
   | "other";
 
 export const LATEST_EVIDENCE_LABELS: Record<LatestEvidenceKind, string> = {
@@ -38,6 +39,7 @@ export const LATEST_EVIDENCE_LABELS: Record<LatestEvidenceKind, string> = {
   historical_certificate: "Historical certificate",
   historical_procurement_disclosure: "Historical procurement disclosure",
   historical_disclosure: "Historical disclosure",
+  official_undated: "Official evidence — source date not stated",
   other: "Public evidence",
 };
 
@@ -73,11 +75,14 @@ export function latestEvidenceKind(row: LatestEvidenceRow, date?: ResolvedEviden
     return "historical_certificate";
   }
   if (isDisclosureEvidence(row.evidence_type)) {
+    if (!resolved.stated) return "official_undated";
     return recent ? "official_procurement_disclosure" : "historical_procurement_disclosure";
   }
   if (isCompanyDisclosureType(row.evidence_type)) {
+    if (!resolved.stated) return "official_undated";
     return recent ? "official_company_disclosure" : "historical_disclosure";
   }
+  if (!resolved.stated) return "official_undated";
   return recent ? "official_company_disclosure" : "historical_disclosure";
 }
 
@@ -101,6 +106,8 @@ export function latestEvidenceRank(row: LatestEvidenceRow): number {
     case "historical_procurement_disclosure":
     case "historical_disclosure":
       return 40;
+    case "official_undated":
+      return 35;
     default:
       return 30;
   }

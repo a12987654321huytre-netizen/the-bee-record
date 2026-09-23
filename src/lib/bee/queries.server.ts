@@ -11,6 +11,12 @@ export type PublicStats = {
   updated30d: number;
   currentCertificates: number;
   officialDisclosures: number;
+  recentCompanies: number;
+  historicalOnly: number;
+  undatedOfficial: number;
+  with2026: number;
+  with2025: number;
+  with2024: number;
 };
 
 export async function publicStats(db: Sql): Promise<PublicStats> {
@@ -38,6 +44,69 @@ export async function publicStats(db: Sql): Promise<PublicStats> {
   const officialDisclosures = await db.query<{ n: number }>(
     "select count(*)::int as n from evidence where publication_state = 'published' and evidence_type = 'government_procurement_disclosure'",
   );
+  const yearCount = async (year: number) =>
+    (
+      await db.query<{ n: number }>(
+        `select count(distinct e.id)::int as n
+         from entities e
+         join evidence_entity_links l on l.entity_id = e.id and l.link_state in ('confirmed','extracted')
+         join evidence ev on ev.id = l.evidence_id and ev.publication_state = 'published'
+         where e.visibility = 'public' and e.merged_into_id is null
+           and ev.issue_date is not null and extract(year from ev.issue_date)::int = $1`,
+        [year],
+      )
+    )[0]?.n ?? 0;
+  const recentCompanies = await db.query<{ n: number }>(
+    `select count(distinct e.id)::int as n
+     from entities e
+     join evidence_entity_links l on l.entity_id = e.id and l.link_state in ('confirmed','extracted')
+     join evidence ev on ev.id = l.evidence_id and ev.publication_state = 'published'
+     where e.visibility = 'public' and e.merged_into_id is null
+       and ev.issue_date is not null and ev.issue_date >= '2024-01-01'`,
+  );
+  const historicalOnly = await db.query<{ n: number }>(
+    `select count(*)::int as n from entities e
+     where e.visibility = 'public' and e.merged_into_id is null
+       and exists (
+         select 1 from evidence_entity_links l
+         join evidence ev on ev.id = l.evidence_id
+         where l.entity_id = e.id and l.link_state in ('confirmed','extracted')
+           and ev.publication_state = 'published' and ev.issue_date is not null and ev.issue_date < '2024-01-01'
+       )
+       and not exists (
+         select 1 from evidence_entity_links l
+         join evidence ev on ev.id = l.evidence_id
+         where l.entity_id = e.id and l.link_state in ('confirmed','extracted')
+           and ev.publication_state = 'published'
+           and (
+             (ev.issue_date is not null and ev.issue_date >= '2024-01-01')
+             or (ev.evidence_type in ('bee_certificate','sworn_affidavit') and ev.lifecycle_state in ('current','expiring_soon'))
+           )
+       )`,
+  );
+  const undatedOfficial = await db.query<{ n: number }>(
+    `select count(*)::int as n from entities e
+     where e.visibility = 'public' and e.merged_into_id is null
+       and exists (
+         select 1 from evidence_entity_links l
+         join evidence ev on ev.id = l.evidence_id
+         where l.entity_id = e.id and l.link_state in ('confirmed','extracted') and ev.publication_state = 'published'
+       )
+       and not exists (
+         select 1 from evidence_entity_links l
+         join evidence ev on ev.id = l.evidence_id
+         where l.entity_id = e.id and l.link_state in ('confirmed','extracted')
+           and ev.publication_state = 'published' and ev.issue_date is not null
+       )
+       and not exists (
+         select 1 from evidence_entity_links l
+         join evidence ev on ev.id = l.evidence_id
+         where l.entity_id = e.id and l.link_state in ('confirmed','extracted')
+           and ev.publication_state = 'published'
+           and ev.evidence_type in ('bee_certificate','sworn_affidavit')
+           and ev.lifecycle_state in ('current','expiring_soon')
+       )`,
+  );
   return {
     companies: companies[0]?.n ?? 0,
     evidence: evidence[0]?.n ?? 0,
@@ -46,6 +115,12 @@ export async function publicStats(db: Sql): Promise<PublicStats> {
     updated30d: updated30d[0]?.n ?? 0,
     currentCertificates: currentCertificates[0]?.n ?? 0,
     officialDisclosures: officialDisclosures[0]?.n ?? 0,
+    recentCompanies: recentCompanies[0]?.n ?? 0,
+    historicalOnly: historicalOnly[0]?.n ?? 0,
+    undatedOfficial: undatedOfficial[0]?.n ?? 0,
+    with2026: await yearCount(2026),
+    with2025: await yearCount(2025),
+    with2024: await yearCount(2024),
   };
 }
 
@@ -154,15 +229,58 @@ export async function listPublicCompanies(
     where.push(`latest.issue_date is not null and extract(year from latest.issue_date)::int = ${add(Number(input.year))}`);
   }
   if (input.evidenceType === "current_certificate") {
-    where.push(`latest.evidence_type in ('bee_certificate','sworn_affidavit') and latest.lifecycle_state in ('current','expiring_soon')`);
-  } else if (input.evidenceType === "official_procurement_disclosure") {
-    where.push(`latest.evidence_type = 'government_procurement_disclosure' and latest.issue_date is not null and latest.issue_date >= '2024-01-01'`);
+    where.push(`exists (
+      select 1 from evidence ev
+      join evidence_entity_links l on l.evidence_id = ev.id
+      where l.entity_id = e.id and l.link_state in ('confirmed','extracted')
+        and ev.publication_state = 'published'
+        and ev.evidence_type in ('bee_certificate','sworn_affidavit')
+        and ev.lifecycle_state in ('current','expiring_soon')
+    )`);
+  } else if (input.evidenceType === "recent_evidence" || input.evidenceType === "official_procurement_disclosure") {
+    where.push(`exists (
+      select 1 from evidence ev
+      join evidence_entity_links l on l.evidence_id = ev.id
+      where l.entity_id = e.id and l.link_state in ('confirmed','extracted')
+        and ev.publication_state = 'published'
+        and ev.issue_date is not null and ev.issue_date >= '2024-01-01'
+        ${input.evidenceType === "official_procurement_disclosure" ? "and ev.evidence_type = 'government_procurement_disclosure'" : ""}
+    )`);
   } else if (input.evidenceType === "official_company_disclosure") {
-    where.push(`latest.evidence_type in ('company_disclosure','annual_report','integrated_report','esg_report','sustainability_report','transformation_report','investor_document') and latest.issue_date is not null and latest.issue_date >= '2024-01-01'`);
-  } else if (input.evidenceType === "historical_disclosure") {
-    where.push(`(
-      (latest.evidence_type = 'government_procurement_disclosure' and (latest.issue_date is null or latest.issue_date < '2024-01-01'))
-      or (latest.evidence_type in ('company_disclosure','annual_report','integrated_report','transformation_report') and (latest.issue_date is null or latest.issue_date < '2024-01-01'))
+    where.push(`exists (
+      select 1 from evidence ev
+      join evidence_entity_links l on l.evidence_id = ev.id
+      where l.entity_id = e.id and l.link_state in ('confirmed','extracted')
+        and ev.publication_state = 'published'
+        and ev.evidence_type in ('company_disclosure','annual_report','integrated_report','esg_report','sustainability_report','transformation_report','investor_document')
+        and ev.issue_date is not null and ev.issue_date >= '2024-01-01'
+    )`);
+  } else if (input.evidenceType === "historical_disclosure" || input.evidenceType === "historical_evidence") {
+    where.push(`exists (
+      select 1 from evidence ev
+      join evidence_entity_links l on l.evidence_id = ev.id
+      where l.entity_id = e.id and l.link_state in ('confirmed','extracted')
+        and ev.publication_state = 'published' and ev.issue_date is not null and ev.issue_date < '2024-01-01'
+    ) and not exists (
+      select 1 from evidence ev
+      join evidence_entity_links l on l.evidence_id = ev.id
+      where l.entity_id = e.id and l.link_state in ('confirmed','extracted')
+        and ev.publication_state = 'published'
+        and (
+          (ev.issue_date is not null and ev.issue_date >= '2024-01-01')
+          or (ev.evidence_type in ('bee_certificate','sworn_affidavit') and ev.lifecycle_state in ('current','expiring_soon'))
+        )
+    )`);
+  } else if (input.evidenceType === "date_not_stated") {
+    where.push(`exists (
+      select 1 from evidence ev
+      join evidence_entity_links l on l.evidence_id = ev.id
+      where l.entity_id = e.id and l.link_state in ('confirmed','extracted') and ev.publication_state = 'published'
+    ) and not exists (
+      select 1 from evidence ev
+      join evidence_entity_links l on l.evidence_id = ev.id
+      where l.entity_id = e.id and l.link_state in ('confirmed','extracted')
+        and ev.publication_state = 'published' and ev.issue_date is not null
     )`);
   }
 

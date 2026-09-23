@@ -6,7 +6,7 @@ import { displayOrUnknown, formatWhen } from "@/lib/bee/format";
 import { CLAIM_FIELD_LABELS, INTERPRETATION_LABELS, isDisclosureEvidence, type BeeField } from "@/lib/bee/constants";
 import { isPublicClaimValue } from "@/lib/bee/claim-quality";
 import { companyInterpretation, disclosureInterpretation } from "@/lib/bee/disclosure";
-import { isModernProcurementEvidence } from "@/lib/bee/recency";
+import { isModernProcurementEvidence, publicCorpusState } from "@/lib/bee/recency";
 import { getCompanyPage } from "@/lib/bee/public.functions";
 import { resolveEvidenceDate, polishEvidenceTitle } from "@/lib/bee/evidence-date";
 import {
@@ -63,6 +63,21 @@ function CompanyPage() {
   const latestDate = latest ? resolveEvidenceDate(evidenceDateInput(latest)) : null;
   const latestKind = latest ? latestEvidenceKind(latest, latestDate ?? undefined) : null;
   const leadWithCertificate = showCertificateFields;
+  const corpusState = publicCorpusState(
+    data.evidence.map((ev) => ({
+      id: ev.id,
+      type: ev.evidence_type,
+      lifecycle: ev.lifecycle_state,
+      issueDate: ev.issue_date,
+      issueDateRaw: ev.issue_date_raw,
+      precision: ev.issue_date_precision,
+      sourceUrl: ev.source_url,
+      title: ev.title,
+      createdAt: ev.created_at,
+      retrievedAt: ev.retrieved_at,
+      discoveredAt: ev.discovered_at,
+    })),
+  );
   const certNumberRaw = data.publishedClaims.find((c) => c.field_key === "certificate_number")?.value ?? null;
   const certNumber = isPublicClaimValue("certificate_number", certNumberRaw) ? certNumberRaw : null;
 
@@ -99,6 +114,7 @@ function CompanyPage() {
                 latest={latest}
                 latestDate={latestDate!}
                 latestKind={latestKind!}
+                corpusState={corpusState}
               />
             ) : (
               <CertificateBlock
@@ -431,6 +447,7 @@ function LatestPublicBlock({
   latestDate,
   latestKind,
   compact,
+  corpusState,
 }: {
   latest: {
     id: string;
@@ -450,17 +467,29 @@ function LatestPublicBlock({
   latestDate: ReturnType<typeof resolveEvidenceDate>;
   latestKind: string;
   compact?: boolean;
+  corpusState?: "current_certificate" | "recent_public_evidence" | "historical_evidence_only" | "official_undated";
 }) {
   const issuer = latest.government_institution ?? latest.document_issuer ?? latest.agency_name;
   const source = sourceOrganisationLabel(latest);
+  const state = corpusState ?? (latestDate.stated ? "recent_public_evidence" : "official_undated");
+  const heading =
+    state === "historical_evidence_only"
+      ? "Historical B-BBEE evidence"
+      : state === "official_undated"
+        ? "Official B-BBEE evidence"
+        : "Latest public B-BBEE evidence";
+  const note =
+    state === "historical_evidence_only"
+      ? "Historical evidence only. No recent or current B-BBEE status is established by this record."
+      : state === "official_undated"
+        ? "Source date not stated. Current B-BBEE status cannot be determined from this evidence."
+        : "What the source reported on that date. This is not a current verification certificate.";
   return (
     <>
-      {!compact ? <h2 className="font-display text-2xl">Latest public B-BBEE evidence</h2> : null}
-      <p className="mt-1 text-sm text-muted">
-        What the source reported on that date. This is not a current verification certificate.
-      </p>
+      {!compact ? <h2 className="font-display text-2xl">{heading}</h2> : null}
+      <p className="mt-1 text-sm text-muted">{note}</p>
       <p className="mt-3">
-        <LifecycleBadge state={latestKind} />
+        <LifecycleBadge state={state === "historical_evidence_only" || state === "official_undated" ? state : latestKind} />
       </p>
       <dl className="mt-4">
         {latest.reported_bee_level ? (

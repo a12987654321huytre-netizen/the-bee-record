@@ -647,7 +647,27 @@ describe("evidence dates", () => {
     assert.equal(polishEvidenceTitle("Western Cape Infrastructure awards — july", d), "Western Cape Infrastructure Awards — July 2023");
   });
 
-  it("treats July 2023 Western Cape awards as historical, not modern", () => {
+  it("reads a stated title year without inventing a day", () => {
+    const d = resolveEvidenceDate({
+      title: "African Bank Limited B-BBEE certificate 2025",
+      sourceUrl: "https://www.africanbank.co.za/media/3762/african-bank-bbbee-certificate.pdf",
+    });
+    assert.equal(d.precision, "year");
+    assert.equal(d.label, "2025");
+    assert.equal(d.iso, "2025-01-01");
+    assert.equal(
+      isModernProcurementEvidence({
+        title: "Aveng Limited Form B-BBEE 1 2025",
+        sourceUrl: "https://www.aveng.co.za/wp-content/uploads/2025/form-bee-1.pdf",
+      }),
+      true,
+    );
+    const amaza = resolveEvidenceDate({
+      sourceUrl: amazaUrl,
+      title: "Western Cape Infrastructure awards — july",
+    });
+    assert.equal(amaza.label, "July 2023");
+    assert.notEqual(amaza.year, 2024);
     assert.equal(
       isModernProcurementEvidence({
         sourceUrl: amazaUrl,

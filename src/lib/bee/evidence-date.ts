@@ -251,6 +251,16 @@ function parseYearOnly(text: string): number | null {
   return null;
 }
 
+/** Year stated in a title or filename. CMS folder tokens such as 2024-01 are ignored. */
+function statedDocumentYear(text: string): number | null {
+  const cleaned = text.replace(/\b20\d{2}[-/]\d{1,2}\b/g, " ");
+  const years = [...cleaned.matchAll(/\b(20\d{2})\b/g)]
+    .map((m) => Number(m[1]))
+    .filter((y) => y >= 1994 && y <= 2030);
+  if (!years.length) return null;
+  return years[years.length - 1] ?? null;
+}
+
 function filenameFromUrl(url: string): string {
   try {
     const u = new URL(url);
@@ -285,10 +295,12 @@ export function inferEvidenceDateFromSource(input: EvidenceDateInput): ResolvedE
     if (month) return fromParts(fileDate.year, month, fileDate.precision === "day" ? Number(fileDate.iso?.slice(8, 10)) : null);
   }
 
-  for (const blob of [title, filename, url]) {
-    const y = parseYearOnly(blob);
+  for (const blob of [title, filename]) {
+    const y = parseYearOnly(blob) ?? statedDocumentYear(blob);
     if (y) return fromParts(y);
   }
+  const bulletinYear = parseYearOnly(url);
+  if (bulletinYear) return fromParts(bulletinYear);
 
   return emptyResolved();
 }

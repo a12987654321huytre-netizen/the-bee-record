@@ -2,7 +2,7 @@ import { collapseWhitespace, fold, normalizeName } from "./normalize.ts";
 import { sha256HexNode } from "./hash.ts";
 import { isDisclosureEvidence, isStatusEvidence } from "./constants.ts";
 import { displayBeeLevel } from "./level.ts";
-import { disclosureIsHistorical } from "./recency.ts";
+import { evidenceDateEligibility } from "./recency.ts";
 
 const JV_RE =
   /\b(jv|j\/v|joint\s+ventures?|consortium|consortia|and\s+associates\s+jv)\b/i;
@@ -203,13 +203,13 @@ export function disclosureInterpretation(input: {
   title?: string | null;
 }): string {
   if (isDisclosureEvidence(input.evidenceType)) {
-    return disclosureIsHistorical({
+    const dated = evidenceDateEligibility({
       issueDate: input.issueDate,
       sourceUrl: input.sourceUrl,
       title: input.title,
-    })
-      ? "historical_procurement_disclosure"
-      : "official_dated_disclosure";
+    });
+    if (dated === "unknown") return "official_undated";
+    return dated === "pre2024" ? "historical_procurement_disclosure" : "official_dated_disclosure";
   }
   if (input.lifecycle === "current") return "current_certificate";
   if (input.lifecycle === "expiring_soon") return "expiring_soon";
@@ -337,4 +337,5 @@ const INTERPRETATION_LOOKUP: Record<string, string> = {
   historical_procurement_disclosure: "Historical procurement disclosure",
   historical_disclosure: "Historical disclosure",
   official_dated_disclosure: "Official dated disclosure",
+  official_undated: "Official evidence — source date not stated",
 };

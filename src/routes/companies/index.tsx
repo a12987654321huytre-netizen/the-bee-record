@@ -63,11 +63,12 @@ function Directory() {
         <form className="mt-6 grid gap-3 md:grid-cols-6">
           <Input name="q" defaultValue={search.q} placeholder="Name or registration" className="md:col-span-2" aria-label="Search companies" />
           <Select name="evidenceType" defaultValue={search.evidenceType ?? ""} aria-label="Evidence type">
-            <option value="">Any evidence type</option>
+            <option value="">All evidence</option>
+            <option value="recent_evidence">Recent evidence (2024–2026)</option>
             <option value="current_certificate">Current certificate</option>
+            <option value="historical_evidence">Historical evidence only</option>
+            <option value="date_not_stated">Date not stated</option>
             <option value="official_procurement_disclosure">Official procurement disclosure</option>
-            <option value="official_company_disclosure">Official company disclosure</option>
-            <option value="historical_disclosure">Historical disclosure</option>
           </Select>
           <Select name="level" defaultValue={search.level ?? ""} aria-label="Reported B-BBEE level">
             <option value="">Any reported level</option>

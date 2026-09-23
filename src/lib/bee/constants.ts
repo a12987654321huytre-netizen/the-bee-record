@@ -187,6 +187,9 @@ export const INTERPRETATION_LABELS: Record<string, string> = {
   official_company_disclosure: "Official company disclosure",
   historical_procurement_disclosure: "Historical procurement disclosure",
   historical_disclosure: "Historical disclosure",
+  official_undated: "Official evidence — source date not stated",
+  historical_evidence_only: "Historical evidence only",
+  recent_public_evidence: "Recent public evidence",
   no_current_certificate: "No current certificate in corpus",
 };
 
@@ -227,6 +230,9 @@ export const PUBLIC_STATE_LABELS: Record<string, string> = {
   official_company_disclosure: "Official company disclosure",
   historical_procurement_disclosure: "Historical procurement disclosure",
   historical_disclosure: "Historical disclosure",
+  official_undated: "Official evidence — source date not stated",
+  historical_evidence_only: "Historical evidence only",
+  recent_public_evidence: "Recent public evidence",
   current_certificate: "Current certificate",
   expired_certificate: "Expired certificate",
   historical_certificate: "Historical certificate",

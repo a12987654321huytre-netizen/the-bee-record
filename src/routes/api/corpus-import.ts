@@ -6,7 +6,7 @@ import {
   retryUnpublished,
   type CorpusItem,
 } from "@/lib/bee/corpus-import.server";
-import { auditPublicRecency, unpublishStaleProcurementEntities } from "@/lib/bee/recency.server";
+import { auditPublicRecency, republishLegitimateHiddenEntities, unpublishStaleProcurementEntities } from "@/lib/bee/recency.server";
 import { runDueSources, runSourceCheck } from "@/lib/bee/crawler.server";
 import {
   repairCorpusStats,
@@ -247,6 +247,13 @@ export const Route = createFileRoute("/api/corpus-import")({
             const out = await unpublishStaleProcurementEntities(db, {
               limit: parsed.data.recencyLimit,
               dryRun: parsed.data.dryRun,
+            });
+            return Response.json({ ...(await stats(db)), phase, ...out });
+          }
+          if (phase === "republish") {
+            const out = await republishLegitimateHiddenEntities(db, {
+              dryRun: parsed.data.dryRun,
+              limit: parsed.data.recencyLimit,
             });
             return Response.json({ ...(await stats(db)), phase, ...out });
           }

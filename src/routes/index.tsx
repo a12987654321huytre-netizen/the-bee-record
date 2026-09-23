@@ -49,10 +49,12 @@ function Home() {
               Search
             </Button>
           </form>
-          <dl className="mt-10 grid grid-cols-2 gap-px bg-rule sm:grid-cols-4">
+          <dl className="mt-10 grid grid-cols-2 gap-px bg-rule sm:grid-cols-3 lg:grid-cols-6">
             <Stat label="Published companies" value={stats.companies} />
-            <Stat label="Indexed evidence" value={stats.evidence} />
+            <Stat label="Recent evidence" value={stats.recentCompanies} />
             <Stat label="Current certificates" value={stats.currentCertificates} />
+            <Stat label="Historical only" value={stats.historicalOnly} />
+            <Stat label="Date not stated" value={stats.undatedOfficial} />
             <Stat label="Official disclosures" value={stats.officialDisclosures} />
           </dl>
           <p className="mt-3 text-xs text-muted">

@@ -1,11 +1,15 @@
 import { audit } from "./audit.server.ts";
 import { jsonText, type Sql } from "./db-types.ts";
 import { newId } from "./ids.ts";
+import { isJointVentureName, isMalformedCompanyName } from "./disclosure.ts";
 import {
   classifyEntityEligibility,
+  looksLikeUnaffiliatedPerson,
+  publicCorpusState,
   type EligibilityBucket,
   type EligibilityEvidence,
   type EligibilityResult,
+  type PublicCorpusState,
 } from "./recency.ts";
 
 const ACTOR = "import:recency-corrected-dates-2026";
@@ -302,5 +306,110 @@ export async function unpublishStaleProcurementEntities(
     remaining: input.dryRun ? ineligible.length : Math.max(0, ineligible.length - batch.length),
     unpublished: input.dryRun ? 0 : batch.length,
     reviewsOpened: input.dryRun ? 0 : reviewsOpened,
+  };
+}
+
+const REPUBLISH_ACTOR = "import:republish-evidence-index-2026";
+
+export type RepublishReport = {
+  hiddenAudited: number;
+  republished: number;
+  historicalRepublished: number;
+  undatedRepublished: number;
+  recentRecovered: number;
+  currentRepublished: number;
+  rejected: number;
+  dryRun: boolean;
+  rejectedSamples: Array<{ name: string; reason: string }>;
+  republishedSamples: Array<{ name: string; slug: string; state: PublicCorpusState }>;
+};
+
+function rejectReason(name: string): string | null {
+  if (isJointVentureName(name)) return "joint venture or consortium";
+  if (isMalformedCompanyName(name)) return "malformed name";
+  if (looksLikeUnaffiliatedPerson(name)) return "looks like a person, not a company";
+  if (/\(\s*\(/.test(name)) return "malformed punctuation";
+  return null;
+}
+
+export async function republishLegitimateHiddenEntities(
+  db: Sql,
+  input: { dryRun?: boolean; limit?: number } = {},
+): Promise<RepublishReport> {
+  const rows = await db.query<{
+    id: string;
+    slug: string;
+    canonical_name: string;
+    evidence: StaleEntityRow["evidence"] | string | null;
+  }>(
+    `select e.id, e.slug, e.canonical_name,
+            coalesce(json_agg(json_build_object(
+              'id', ev.id,
+              'type', ev.evidence_type,
+              'lifecycle', ev.lifecycle_state,
+              'issue_date', ev.issue_date,
+              'issue_date_raw', ev.issue_date_raw,
+              'issue_date_precision', ev.issue_date_precision,
+              'source_url', ev.source_url,
+              'title', ev.title,
+              'created_at', ev.created_at,
+              'retrieved_at', ev.retrieved_at,
+              'discovered_at', ev.discovered_at
+            ) order by ev.id) filter (where ev.id is not null), '[]'::json) as evidence
+     from entities e
+     left join evidence_entity_links l on l.entity_id = e.id and l.link_state in ('confirmed','extracted')
+     left join evidence ev on ev.id = l.evidence_id and ev.publication_state = 'published'
+     where e.visibility = 'hidden' and e.merged_into_id is null
+     group by e.id, e.slug, e.canonical_name`,
+  );
+  const rejectedSamples: RepublishReport["rejectedSamples"] = [];
+  const accepted: Array<{ id: string; slug: string; name: string; state: PublicCorpusState }> = [];
+  for (const row of rows) {
+    const evidence = parseEvidence(row.evidence);
+    const reason = rejectReason(row.canonical_name);
+    if (!evidence.length) {
+      if (rejectedSamples.length < 30) rejectedSamples.push({ name: row.canonical_name, reason: "no published evidence" });
+      continue;
+    }
+    if (reason) {
+      if (rejectedSamples.length < 40) rejectedSamples.push({ name: row.canonical_name, reason });
+      continue;
+    }
+    const state = publicCorpusState(evidence.map(asEligibilityEvidence));
+    accepted.push({ id: row.id, slug: row.slug, name: row.canonical_name, state });
+  }
+  const batch = input.limit ? accepted.slice(0, input.limit) : accepted;
+  if (!input.dryRun && batch.length) {
+    await db.query(
+      `update entities set visibility = 'public', updated_at = now()
+        where id = any($1::text[]) and visibility = 'hidden' and merged_into_id is null`,
+      [batch.map((row) => row.id)],
+    );
+    const CHUNK = 200;
+    for (let i = 0; i < batch.length; i += CHUNK) {
+      const slice = batch.slice(i, i + CHUNK);
+      await db.query(
+        `insert into audit_logs
+           (id, actor_type, actor_id, action, target_type, target_id, before_state, after_state, reason)
+         select u.id, 'import', $2, 'entity.republished', 'entity', u.target_id,
+                '{"visibility":"hidden"}', json_build_object('visibility','public','corpus_state', u.state)::text,
+                'Republished under the evidence-index policy. Historical and undated official records stay public but are not current status.'
+           from unnest($1::text[], $3::text[], $4::text[]) as u(id, target_id, state)`,
+        [slice.map(() => newId("aud")), REPUBLISH_ACTOR, slice.map((row) => row.id), slice.map((row) => row.state)],
+      );
+    }
+  }
+  const count = (state: PublicCorpusState) => batch.filter((row) => row.state === state).length;
+  return {
+    hiddenAudited: rows.length,
+    republished: input.dryRun ? 0 : batch.length,
+    historicalRepublished: count("historical_evidence_only"),
+    undatedRepublished: count("official_undated"),
+    recentRecovered: count("recent_public_evidence"),
+    currentRepublished: count("current_certificate"),
+    rejected: rows.length - accepted.length,
+    dryRun: Boolean(input.dryRun),
+    rejectedSamples,
+    republishedSamples: batch.slice(0, 25).map((row) => ({ name: row.name, slug: row.slug, state: row.state })),
   };
 }

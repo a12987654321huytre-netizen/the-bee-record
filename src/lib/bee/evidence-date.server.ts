@@ -22,6 +22,7 @@ type EvidenceDateRow = {
   created_at: string;
   retrieved_at: string | null;
   discovered_at: string;
+  evidence_type?: string;
 };
 
 function asInput(row: EvidenceDateRow): EvidenceDateInput {
@@ -69,9 +70,9 @@ function bucketOf(precision: DatePrecision | null, stated: boolean): DateAuditBu
 }
 
 const SELECT_SQL = `select id, title, source_url, issue_date::text as issue_date, issue_date_raw, issue_date_precision,
-            created_at::text as created_at, retrieved_at::text as retrieved_at, discovered_at::text as discovered_at
-     from evidence
-     where evidence_type = 'government_procurement_disclosure'`;
+            created_at::text as created_at, retrieved_at::text as retrieved_at, discovered_at::text as discovered_at,
+            evidence_type
+     from evidence`;
 
 async function ensureDateColumns(db: Sql) {
   await db.query(`alter table evidence add column if not exists issue_date_precision text`);
@@ -149,7 +150,10 @@ export async function repairProcurementEvidenceDates(db: Sql): Promise<Procureme
     const input = asInput(row);
     const wasImport = isImportTimestampDate(input) || !row.issue_date;
     const resolved = resolveEvidenceDate(input);
-    const polished = polishEvidenceTitle(row.title, resolved);
+    const polished =
+      row.evidence_type === "government_procurement_disclosure" || !row.evidence_type
+        ? polishEvidenceTitle(row.title, resolved)
+        : row.title;
     const nextIso = resolved.stated ? resolved.iso : null;
     const nextPrecision = resolved.stated ? resolved.precision : null;
     const nextRaw = resolved.stated ? resolved.raw : row.issue_date_raw;

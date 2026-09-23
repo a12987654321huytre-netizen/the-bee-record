@@ -266,4 +266,50 @@ export function classifyEntityEligibility(evidence: EligibilityEvidence[] | null
   };
 }
 
+export type PublicCorpusState =
+  | "current_certificate"
+  | "recent_public_evidence"
+  | "historical_evidence_only"
+  | "official_undated";
+
+export const PUBLIC_CORPUS_LABELS: Record<PublicCorpusState, string> = {
+  current_certificate: "Current certificate",
+  recent_public_evidence: "Recent public evidence",
+  historical_evidence_only: "Historical evidence only",
+  official_undated: "Official evidence — source date not stated",
+};
+
+/** Publication state of a company. Recency and current-certificate status stay separate. */
+export function publicCorpusState(evidence: EligibilityEvidence[] | null | undefined): PublicCorpusState {
+  const rows = evidence ?? [];
+  let modern = false;
+  let historical = false;
+  let current = false;
+  for (const ev of rows) {
+    if (isStatusEvidence(ev.type) && (ev.lifecycle === "current" || ev.lifecycle === "expiring_soon")) {
+      current = true;
+    }
+    const status = evidenceDateEligibility(ev);
+    if (status === "modern") modern = true;
+    else if (status === "pre2024") historical = true;
+  }
+  if (current) return "current_certificate";
+  if (modern) return "recent_public_evidence";
+  if (historical) return "historical_evidence_only";
+  return "official_undated";
+}
+
+const CORPORATE_TOKEN =
+  /\b(pty|ltd|limited|inc|cc|holdings|group|services|solutions|trading|construction|consulting|consultants|projects|project|bank|municipality|university|college|trust|fund|society|association|cooperative|enterprises?|contractors?|engineering|logistics|properties|investments|resources|supplies|systems|technologies|technology|media|health|medical|energy|mining|foods|motors|security|cleaning|transport|management|civils|electrical|plumbing|printers|printing|advisory|consult)\b/i;
+
+/** Title-case personal names without a company token. All-caps supplier names are not people. */
+export function looksLikeUnaffiliatedPerson(name: string): boolean {
+  const t = name.replace(/\s+/g, " ").trim();
+  if (!t || t === t.toUpperCase()) return false;
+  if (CORPORATE_TOKEN.test(t) || /\d/.test(t) || /[()]/.test(t)) return false;
+  const words = t.split(" ");
+  if (words.length < 2 || words.length > 3) return false;
+  return words.every((w) => /^[A-Z][a-zA-Z'’.-]{1,}$/.test(w));
+}
+
 export { toIsoDate };
