@@ -35,6 +35,7 @@ import {
   rejectJunkReviews,
 } from "@/lib/bee/enrichment.server";
 import { sql } from "@/lib/bee/sql.server";
+import { publicStats } from "@/lib/bee/queries.server";
 import {
   auditProcurementEvidenceDates,
   repairProcurementEvidenceDates,
@@ -128,7 +129,8 @@ const bodySchema = z.object({
 
 async function stats(db: Awaited<ReturnType<typeof sql>>) {
   const counts = await repairCorpusStats(db);
-  return { ok: true, counts };
+  const corpus = await publicStats(db);
+  return { ok: true, counts, corpus };
 }
 
 export const Route = createFileRoute("/api/corpus-import")({
