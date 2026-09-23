@@ -128,8 +128,9 @@ export async function listSectors(db: Sql) {
   return db.query<{ id: string; slug: string; name: string; description: string | null; n: number }>(
     `select s.id, s.slug, s.name, s.description, count(ec.id)::int as n
      from sectors s
-     left join entity_classifications ec on ec.sector_id = s.id and ec.is_public = 1
+     left join entity_classifications ec on ec.sector_id = s.id and ec.is_public = 1 and ec.classification_type = 'sector'
      left join entities e on e.id = ec.entity_id and e.visibility = 'public' and e.merged_into_id is null
+     where s.id not in ('sec_jse', 'sec_government_suppliers')
      group by s.id, s.slug, s.name, s.description
      order by s.name`,
   );
@@ -216,7 +217,7 @@ export async function listPublicCompanies(
   }
   if (input.sector) {
     where.push(
-      `exists (select 1 from entity_classifications ec join sectors s on s.id = ec.sector_id where ec.entity_id = e.id and s.slug = ${add(input.sector)} and ec.is_public = 1)`,
+      `exists (select 1 from entity_classifications ec join sectors s on s.id = ec.sector_id where ec.entity_id = e.id and s.slug = ${add(input.sector)} and ec.is_public = 1 and ec.classification_type = 'sector' and s.id not in ('sec_jse', 'sec_government_suppliers'))`,
     );
   }
   if (input.agency) {
@@ -432,7 +433,8 @@ export async function getPublicEntity(db: Sql, slug: string) {
   const sectors = await db.query<{ slug: string; name: string }>(
     `select s.slug, s.name from entity_classifications ec
      join sectors s on s.id = ec.sector_id
-     where ec.entity_id = $1 and ec.is_public = 1`,
+     where ec.entity_id = $1 and ec.is_public = 1 and ec.classification_type = 'sector'
+       and s.id not in ('sec_jse', 'sec_government_suppliers')`,
     [entity.id],
   );
   const parents = await db.query<{ id: string; slug: string; canonical_name: string; relationship_type: string }>(

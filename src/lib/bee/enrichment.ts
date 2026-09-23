@@ -105,7 +105,74 @@ export const EXTRA_SECTORS: Array<{ id: string; slug: string; name: string }> = 
   { id: "sec_facilities", slug: "facilities", name: "Cleaning / facilities" },
   { id: "sec_printing", slug: "printing", name: "Printing" },
   { id: "sec_education", slug: "education", name: "Education / training" },
+  { id: "sec_media", slug: "media", name: "Media / communications" },
 ];
+
+/** Not industries. Stored as classification attributes, never as public sectors. */
+export const NON_INDUSTRY_SECTOR_IDS = {
+  jse: "sec_jse",
+  governmentSuppliers: "sec_government_suppliers",
+} as const;
+
+const INDUSTRY_RULES: Array<{ re: RegExp; id: string }> = [
+  { re: /\bpharmac(?:y|eutical|are)?s?\b/i, id: "sec_pharma" },
+  { re: /\b(?:medical aid|medical scheme)\b/i, id: "sec_insurance" },
+  { re: /\b(?:healthcare|hospital|hospitals|clinic|clinics)\b/i, id: "sec_healthcare" },
+  { re: /\bmedical\b/i, id: "sec_healthcare" },
+  { re: /\bbanks?\b|\bbanking\b/i, id: "sec_banking" },
+  { re: /\b(?:insurance|insurers?|underwriters?)\b/i, id: "sec_insurance" },
+  { re: /\bassurance\b/i, id: "sec_insurance" },
+  { re: /\b(?:mining|miner|miners|colliery|gold mine)\b/i, id: "sec_mining" },
+  { re: /\b(?:construction|kontraksie|konstruksie|civils?|builders?|building)\b/i, id: "sec_construction" },
+  { re: /\b(?:engineer(?:s|ing)?|ingenieurs(?:wese)?)\b/i, id: "sec_engineering" },
+  { re: /\belectrical\b/i, id: "sec_engineering" },
+  { re: /\b(?:attorney|attorneys|advocates)\b/i, id: "sec_legal" },
+  { re: /\b(?:accountant|accountants|auditors?)\b/i, id: "sec_accounting" },
+  { re: /\b(?:recruitment|staffing)\b/i, id: "sec_recruitment" },
+  { re: /\b(?:logistic(?:s)?|freight|courier)\b/i, id: "sec_logistics" },
+  { re: /\b(?:transport|trucking|haulage|vervoer)\b/i, id: "sec_transport" },
+  { re: /\b(?:security|guarding|sekuriteit)\b/i, id: "sec_security" },
+  { re: /\b(?:cleaning|cleaners?|hygiene|sanitary|facilities)\b/i, id: "sec_facilities" },
+  { re: /\b(?:hotel|hotels|hospitality|lodge|guesthouse|guest house)\b/i, id: "sec_hospitality" },
+  { re: /\b(?:training|academy|college|university|education|skool)\b/i, id: "sec_education" },
+  { re: /\b(?:agricultur\w*|farming|farms?|boerdery|\bagri\b)\b/i, id: "sec_agriculture" },
+  { re: /\b(?:propert(?:y|ies)|eiendom(?:me)?|\breit\b)\b/i, id: "sec_property" },
+  { re: /\b(?:energy|energies|solar|petroleum|renewable)\b/i, id: "sec_energy" },
+  { re: /\b(?:software|\bict\b|cyber)\b/i, id: "sec_ict" },
+  { re: /\b(?:telecom(?:munication)?s?|cellular)\b/i, id: "sec_telecoms" },
+  { re: /\b(?:retail(?:er)?s?|supermarket|wholesalers?)\b/i, id: "sec_retail" },
+  { re: /\b(?:foods?|catering|beverage|beverages|bakery)\b/i, id: "sec_food" },
+  { re: /\b(?:print(?:ing|ers)?)\b/i, id: "sec_printing" },
+  { re: /\b(?:automotive|motors?|vehicles?|tyres?|tires?)\b/i, id: "sec_automotive" },
+  { re: /\bmanufactur/i, id: "sec_manufacturing" },
+  { re: /\b(?:steel|welding|fabrication|pipes|fittings|cables)\b/i, id: "sec_industrial" },
+  { re: /\b(?:media|broadcast(?:ing)?|publishing)\b/i, id: "sec_media" },
+  { re: /\bconsult(?:ing|ancy|ants?)?\b/i, id: "sec_professional" },
+];
+
+/**
+ * Industry sectors implied by the company's own name.
+ * Generic words (trading, projects, holdings, solutions) are not industries.
+ * Returns at most two sectors. Does not use tender text.
+ */
+export function inferIndustrySectors(name: string): string[] {
+  if (/\b(?:medical aid|medical scheme)\b/i.test(name)) return ["sec_insurance"];
+  const text = name.replace(/\bquality assurance\b/gi, " ").replace(/\bcapacity building\b/gi, " ");
+  const hits: string[] = [];
+  for (const rule of INDUSTRY_RULES) {
+    if (!rule.re.test(text)) continue;
+    if (!hits.includes(rule.id)) hits.push(rule.id);
+  }
+  const specific = hits.filter((id) => id !== "sec_professional");
+  const chosen = (specific.length ? specific : hits).slice(0, 2);
+  if (chosen.includes("sec_engineering")) {
+    return chosen.filter((id) => id !== "sec_professional").slice(0, 2);
+  }
+  if (chosen.includes("sec_construction") && chosen.includes("sec_engineering")) {
+    return ["sec_engineering", "sec_construction"];
+  }
+  return chosen;
+}
 
 export const ADMIN_QUEUES = [
   "procurement_only",
@@ -165,7 +232,11 @@ export function queuePredicate(queue: string): string | null {
     case "no_registration":
       return `(e.registration_number is null or btrim(e.registration_number) = '')`;
     case "no_sector":
-      return `not exists (select 1 from entity_classifications c where c.entity_id = e.id)`;
+      return `not exists (
+        select 1 from entity_classifications c
+        where c.entity_id = e.id and c.is_public = 1 and c.classification_type = 'sector'
+          and c.sector_id not in ('sec_jse', 'sec_government_suppliers')
+      )`;
     case "no_website":
       return `(e.website is null or btrim(e.website) = '')`;
     case "no_current_certificate":

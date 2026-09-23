@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { parseDate, expiryStatus } from "./dates.ts";
 import { parseExtractionJson, parseExtractionText } from "./extraction-schema.ts";
 import { extractDeterministically, inferEvidenceTypeFromUrl } from "./deterministic-extract.ts";
-import { enrichmentPriorityScore, formatZaRegistration, isVerifierRegistration, isZaCompanyRegistration, queuePredicate } from "./enrichment.ts";
+import { enrichmentPriorityScore, formatZaRegistration, inferIndustrySectors, isVerifierRegistration, isZaCompanyRegistration, queuePredicate } from "./enrichment.ts";
 import { canonicalFieldKey, isPlausibleEntityName, isPlausibleSignatory, publicLocator } from "./claim-quality.ts";
 import { classifyPublishedEvidence, mergeRepairClaims } from "./lifecycle.ts";
 import { normalizeBeeLevel } from "./level.ts";
@@ -23,6 +23,20 @@ import {
   resolveEvidenceDate,
 } from "./evidence-date.ts";
 import { latestEvidenceKind, latestEvidenceRank, selectLatestPublicEvidence, sourceOrganisationLabel } from "./latest-evidence.ts";
+
+describe("industry sectors", () => {
+  it("reads industry from the company name and ignores generic words", () => {
+    assert.deepEqual(inferIndustrySectors("MOTLA CONSULTING ENGINEERS"), ["sec_engineering"]);
+    assert.deepEqual(inferIndustrySectors("Proactive Construction and Maintenance"), ["sec_construction"]);
+    assert.deepEqual(inferIndustrySectors("ROYAL SECURITY"), ["sec_security"]);
+    assert.deepEqual(inferIndustrySectors("Pharmacare Limited"), ["sec_pharma"]);
+    assert.deepEqual(inferIndustrySectors("Hukho Trading and Projects (Pty) Ltd"), []);
+    assert.deepEqual(inferIndustrySectors("Quality Assurance Consulting"), ["sec_professional"]);
+    assert.deepEqual(inferIndustrySectors("Discovery Health Medical Scheme"), ["sec_insurance"]);
+    assert.deepEqual(inferIndustrySectors("Capacity Building Projects"), []);
+    assert.deepEqual(inferIndustrySectors("Clean Energy Solutions"), ["sec_energy"]);
+  });
+});
 
 describe("dates", () => {
   it("parses ISO and long forms", () => {

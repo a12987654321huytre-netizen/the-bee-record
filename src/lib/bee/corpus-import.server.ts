@@ -637,12 +637,25 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
   }
 
   const sectors = new Set(item.sectorIds ?? []);
-  if (item.jseListed) sectors.add("sec_jse");
+  sectors.delete("sec_jse");
+  sectors.delete("sec_government_suppliers");
   for (const sectorId of sectors) {
     try {
       await setClassification(db, { entityId, sectorId, actorId: ACTOR });
     } catch {
       // unknown sector id — skip
+    }
+  }
+  if (item.jseListed) {
+    try {
+      await setClassification(db, {
+        entityId,
+        sectorId: "sec_jse",
+        actorId: ACTOR,
+        classificationType: "listing",
+      });
+    } catch {
+      /* sector row missing */
     }
   }
 

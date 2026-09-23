@@ -40,6 +40,7 @@ import {
   auditProcurementEvidenceDates,
   repairProcurementEvidenceDates,
 } from "@/lib/bee/evidence-date.server";
+import { matchCompanyUniverse, runSectorClassificationPass } from "@/lib/bee/sector-pass.server";
 
 const evidenceSchema = z.object({
   url: z.string().url(),
@@ -117,14 +118,17 @@ const bodySchema = z.object({
       "dates",
       "republish",
       "hide-names",
+      "sector-pass",
+      "coverage",
     ])
     .optional(),
   afterId: z.string().nullable().optional(),
   sourceId: z.string().optional(),
   dryRun: z.boolean().optional(),
   recencyLimit: z.number().int().min(1).max(1500).optional(),
-  enrichLimit: z.number().int().min(1).max(200).optional(),
+  enrichLimit: z.number().int().min(1).max(1000).optional(),
   queue: z.string().optional(),
+  names: z.array(z.string().min(2).max(180)).max(500).optional(),
 });
 
 async function stats(db: Awaited<ReturnType<typeof sql>>) {
@@ -222,6 +226,22 @@ export const Route = createFileRoute("/api/corpus-import")({
             }
             if (phase === "queue") {
               const out = await listPriorityQueue(db, parsed.data.queue ?? "certificate_enrichment", limit ?? 40);
+              return Response.json({ ok: true, phase, ...out });
+            }
+            if (phase === "sector-pass") {
+              const out = await runSectorClassificationPass(db, {
+                limit: parsed.data.enrichLimit ?? 800,
+                dryRun: parsed.data.dryRun ?? false,
+                afterName: parsed.data.afterId ?? "",
+              });
+              return Response.json({ ok: true, phase, ...out });
+            }
+            if (phase === "coverage") {
+              const names = parsed.data.names ?? [];
+              if (!names.length) {
+                return Response.json({ ok: false, error: "names required for coverage." }, { status: 400 });
+              }
+              const out = await matchCompanyUniverse(db, names);
               return Response.json({ ok: true, phase, ...out });
             }
             if (phase === "dates") {

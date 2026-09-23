@@ -200,14 +200,15 @@ export async function createRelationship(
 
 export async function setClassification(
   db: Sql,
-  input: { entityId: string; sectorId: string; isPublic?: boolean; actorId: string },
+  input: { entityId: string; sectorId: string; isPublic?: boolean; actorId: string; classificationType?: string },
 ) {
   const id = newId("cls");
+  const classificationType = input.classificationType ?? "sector";
   await db.query(
-    `insert into entity_classifications (id, entity_id, sector_id, is_public)
-     values ($1,$2,$3,$4)
+    `insert into entity_classifications (id, entity_id, sector_id, classification_type, is_public)
+     values ($1,$2,$3,$4,$5)
      on conflict (entity_id, sector_id, classification_type) do update set is_public = excluded.is_public`,
-    [id, input.entityId, input.sectorId, input.isPublic === false ? 0 : 1],
+    [id, input.entityId, input.sectorId, classificationType, input.isPublic === false ? 0 : 1],
   );
 }
 

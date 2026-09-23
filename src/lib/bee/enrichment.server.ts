@@ -182,7 +182,11 @@ export async function auditEnrichment(db: Sql) {
     db,
     `select count(*)::int as n from entities e
      where e.visibility = 'public' and e.merged_into_id is null
-       and not exists (select 1 from entity_classifications c where c.entity_id = e.id)`,
+       and not exists (
+         select 1 from entity_classifications c
+         where c.entity_id = e.id and c.is_public = 1 and c.classification_type = 'sector'
+           and c.sector_id not in ('sec_jse', 'sec_government_suppliers')
+       )`,
   );
   const missingWebsite = await qn(
     db,
@@ -891,7 +895,21 @@ export async function applyIdentityBatch(
     }
 
     const sectors = new Set(item.sectorIds ?? []);
-    if (item.jseListed) sectors.add("sec_jse");
+    sectors.delete("sec_jse");
+    sectors.delete("sec_government_suppliers");
+    if (item.jseListed) {
+      try {
+        await setClassification(db, {
+          entityId: row.id,
+          sectorId: "sec_jse",
+          actorId: ACTOR,
+          classificationType: "listing",
+        });
+        filled.push("listing:jse");
+      } catch {
+        /* unknown sector */
+      }
+    }
     for (const sectorId of sectors) {
       try {
         await setClassification(db, { entityId: row.id, sectorId, actorId: ACTOR });
