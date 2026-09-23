@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   authorizeCorpusImport,
   importCorpusBatch,
+  reprocessStoredUrls,
   retryUnpublished,
   type CorpusItem,
 } from "@/lib/bee/corpus-import.server";
@@ -120,6 +121,7 @@ const bodySchema = z.object({
       "hide-names",
       "sector-pass",
       "coverage",
+      "reprocess",
     ])
     .optional(),
   afterId: z.string().nullable().optional(),
@@ -242,6 +244,17 @@ export const Route = createFileRoute("/api/corpus-import")({
                 return Response.json({ ok: false, error: "names required for coverage." }, { status: 400 });
               }
               const out = await matchCompanyUniverse(db, names);
+              return Response.json({ ok: true, phase, ...out });
+            }
+            if (phase === "reprocess") {
+              const urls = [
+                ...(parsed.data.names ?? []),
+                ...(parsed.data.items ?? []).flatMap((item) => (item.evidence ?? []).map((row) => row.url)),
+              ];
+              if (!urls.length) {
+                return Response.json({ ok: false, error: "urls required for reprocess." }, { status: 400 });
+              }
+              const out = await reprocessStoredUrls(db, urls);
               return Response.json({ ok: true, phase, ...out });
             }
             if (phase === "dates") {

@@ -394,6 +394,25 @@ export function mergeRepairClaims(input: {
       }
     }
 
+    if (!input.evidencePublished && (field === "issue_date" || field === "expiry_date") && incoming && incomingVal) {
+      claims.push({
+        field_key: field,
+        raw_value: incoming.raw_value,
+        normalized_value: incoming.normalized_value,
+        confidence: incoming.confidence,
+        source_snippet: incoming.locator,
+        parser: "repair/v1",
+        section: incoming.warning,
+        edited_value: null,
+        edited_by: null,
+        edited_at: null,
+        published_state: "unpublished",
+        review_state: "pending",
+        page_number: incoming.page,
+      });
+      continue;
+    }
+
     if (prevVal && incomingVal && prevVal !== incomingVal) {
       conflicts.push({ field, previous: prevVal, incoming: incomingVal });
       claims.push({

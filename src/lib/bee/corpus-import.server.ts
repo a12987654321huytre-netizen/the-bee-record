@@ -6,6 +6,11 @@ import { persistExtraction } from "./extract.server.ts";
 import { createSource } from "./crawler.server.ts";
 import { getExpiringSoonDays } from "./settings.server.ts";
 import { publishEvidence } from "./publication.server.ts";
+import {
+  clearRepairRunsForEvidence,
+  closeResolvedRegistrationReviews,
+  repairOneEvidence,
+} from "./repair.server.ts";
 import { extractDomain, normalizeName, normalizeRegistration } from "./normalize.ts";
 import { formatZaRegistration, isVerifierRegistration, isZaCompanyRegistration } from "./enrichment.ts";
 import { newId } from "./ids.ts";
@@ -16,6 +21,7 @@ import {
   cleanSupplierName,
   isJointVentureName,
   isMalformedCompanyName,
+  isImportableShortLegalName,
   procurementIdentityHash,
 } from "./disclosure.ts";
 import { parseAwardDateInput, polishEvidenceTitle, inferEvidenceDateFromSource } from "./evidence-date.ts";
@@ -559,17 +565,16 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
     result.skipReason = "jv";
     return result;
   }
-  if (isMalformedCompanyName(name)) {
+  const existing = await findExistingEntity(db, {
+    canonicalName: name,
+    registrationNumber: item.registrationNumber,
+  });
+  if (isMalformedCompanyName(name) && !existing && !isImportableShortLegalName(name, item.registrationNumber)) {
     result.error = "Held: malformed supplier name.";
     result.skipped = true;
     result.skipReason = "malformed";
     return result;
   }
-
-  const existing = await findExistingEntity(db, {
-    canonicalName: name,
-    registrationNumber: item.registrationNumber,
-  });
   const procurementRows = item.procurement ?? [];
   const procurementModern = procurementQualifiesForPublicEntity(
     procurementRows.map((row) => ({
@@ -887,4 +892,66 @@ export async function importCorpusBatch(db: Sql, items: CorpusItem[]): Promise<{
     }
   }
   return { results, duplicateEntityAttempts, duplicateDocuments, published, reviewHeld };
+}
+
+export async function reprocessStoredUrls(db: Sql, urls: string[]) {
+  const unique = [...new Set(urls.map((url) => url.trim()).filter(Boolean))].slice(0, 20);
+  const days = await getExpiringSoonDays(db);
+  const results: Array<Record<string, unknown>> = [];
+  for (const url of unique) {
+    const rows = await db.query<{ id: string }>(
+      `select id from evidence
+       where source_url = $1 or discovered_url = $1 or canonical_url = $1
+       limit 4`,
+      [url],
+    );
+    if (!rows.length) {
+      results.push({ url, found: false });
+      continue;
+    }
+    for (const row of rows) {
+      await clearRepairRunsForEvidence(db, row.id);
+      const repaired = await repairOneEvidence(db, row.id);
+      const named = new Set(repaired.namedRegistrations ?? []);
+      const links = await db.query<{ entity_id: string; registration_number: string | null }>(
+        `select e.id as entity_id, e.registration_number
+         from evidence_entity_links l
+         join entities e on e.id = l.entity_id
+         where l.evidence_id = $1 and e.merged_into_id is null
+         limit 6`,
+        [row.id],
+      );
+      const publishes: Array<{ entityId: string; published: boolean; error?: string }> = [];
+      let closed = 0;
+      for (const link of links) {
+        const norm = link.registration_number ? normalizeRegistration(link.registration_number) : "";
+        const included = Boolean(norm && named.has(norm) && !isVerifierRegistration(norm));
+        closed += await closeResolvedRegistrationReviews(db, row.id, link.registration_number, included);
+        const published = await publishLinkedEvidence(db, {
+          evidenceId: row.id,
+          entityId: link.entity_id,
+          expiringSoonDays: days,
+        });
+        if (published.published) {
+          await db.query(
+            "update entities set visibility = 'public', updated_at = now() where id = $1 and visibility in ('draft', 'hidden')",
+            [link.entity_id],
+          );
+        }
+        publishes.push({ entityId: link.entity_id, published: published.published, error: published.error });
+      }
+      results.push({
+        url,
+        found: true,
+        evidenceId: row.id,
+        parsed: repaired.parsed,
+        textLength: repaired.textLength ?? 0,
+        named: repaired.namedRegistrations ?? [],
+        closed,
+        repairError: repaired.error,
+        publishes,
+      });
+    }
+  }
+  return { results };
 }

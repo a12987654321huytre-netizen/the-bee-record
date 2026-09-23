@@ -4,14 +4,15 @@ import { PARSER_REPAIR, PARSER_SANITIZE } from "./constants.ts";
 import { EXTRACTION_SCHEMA_VERSION } from "./constants.ts";
 import { jsonText, type Sql } from "./db-types.ts";
 import { canonicalFieldKey, isPublicClaimValue } from "./claim-quality.ts";
-import { extractBva, extractDeterministically } from "./deterministic-extract.ts";
+import { extractBva, extractDeterministically, registrationAppearsInText } from "./deterministic-extract.ts";
 import { safeFetch } from "./fetch.server.ts";
 import { newId } from "./ids.ts";
 import { classifyPublishedEvidence, mergeRepairClaims } from "./lifecycle.ts";
 import { normalizeRegistration } from "./normalize.ts";
 import { parseDocument } from "./parse.server.ts";
 import { applyLifecycleForEntity, lockedFields } from "./publication.server.ts";
-import { ensureReviewItem } from "./review.server.ts";
+import { isCompanyDisclosureType } from "./latest-evidence.ts";
+import { closeReview, ensureReviewItem } from "./review.server.ts";
 import { getExpiringSoonDays } from "./settings.server.ts";
 import { readAsset } from "./storage.server.ts";
 import type { ExtractedClaim } from "./types.ts";
@@ -82,6 +83,8 @@ export type RepairEvidenceResult = {
   reviewItemIds: string[];
   textLength?: number;
   fetchFallback?: boolean;
+  includedRegistration?: boolean;
+  namedRegistrations?: string[];
   error?: string;
 };
 
@@ -142,8 +145,14 @@ async function applyEvidenceMetadata(
   const expiry = issue && expiryRaw && issue === expiryRaw ? null : expiryRaw;
   const docType = map.get("document_type") ?? map.get("certificate_type") ?? null;
   const issuer = map.get("verification_agency") ?? null;
+  const current = await db.query<{ evidence_type: string }>("select evidence_type from evidence where id = $1", [evidenceId]);
+  const currentType = current[0]?.evidence_type ?? "";
+  const keepDisclosure =
+    isCompanyDisclosureType(currentType) ||
+    currentType === "government_procurement_disclosure" ||
+    currentType === "company_webpage";
   let typeUpdate: string | null = null;
-  if (docType === "bee_certificate" || docType === "sworn_affidavit") typeUpdate = docType;
+  if (!keepDisclosure && (docType === "bee_certificate" || docType === "sworn_affidavit")) typeUpdate = docType;
   await db.query(
     `update evidence set
         issue_date = coalesce($2, issue_date),
@@ -280,6 +289,16 @@ export async function repairOneEvidence(db: Sql, evidenceId: string): Promise<Re
   }
   result.parsed = Boolean(text.trim());
   result.textLength = text.trim().length;
+  if (text.trim()) {
+    const named: string[] = [];
+    const re = /\b(\d{4}\s*\/\s*\d{6}\s*\/\s*\d{2})\b/g;
+    let found: RegExpExecArray | null;
+    while ((found = re.exec(text))) {
+      const norm = normalizeRegistration(found[1]!);
+      if (norm && !named.includes(norm)) named.push(norm);
+    }
+    result.namedRegistrations = named;
+  }
 
   const extracted = text.trim() ? extractDeterministically(text) : { claims: [], warnings: ["No extractable text was available."], ambiguity: [] };
   const previousValues = new Map(previous.map((c) => [c.field_key, workingValue(c)]));
@@ -328,7 +347,17 @@ export async function repairOneEvidence(db: Sql, evidenceId: string): Promise<Re
   if (entity) {
     const extractedReg = workingValue(claims.find((c) => c.field_key === "registration_number"));
     const extractedNorm = extractedReg ? normalizeRegistration(extractedReg) : null;
-    if (extractedNorm && entity.registration_number_normalized && extractedNorm !== entity.registration_number_normalized) {
+    const included =
+      Boolean(text) &&
+      Boolean(entity.registration_number_normalized) &&
+      registrationAppearsInText(text, entity.registration_number_normalized);
+    result.includedRegistration = included;
+    if (
+      extractedNorm &&
+      entity.registration_number_normalized &&
+      extractedNorm !== entity.registration_number_normalized &&
+      !included
+    ) {
       const reviewId = await ensureReviewItem(db, {
         type: "registration_number_conflict",
         reason: `Extracted registration ${extractedReg} does not match ${entity.canonical_name} (${entity.registration_number}). Entity identifier was not overwritten.`,
@@ -365,6 +394,56 @@ export async function repairOneEvidence(db: Sql, evidenceId: string): Promise<Re
   }
 
   return result;
+}
+
+export async function clearRepairRunsForEvidence(db: Sql, evidenceId: string): Promise<void> {
+  await db.query(
+    `update published_claims set claim_id = null
+     where claim_id in (
+       select c.id from extracted_claims c
+       join extraction_runs r on r.id = c.extraction_run_id
+       where r.evidence_id = $1 and r.parser = $2
+     )`,
+    [evidenceId, PARSER_REPAIR],
+  );
+  await db.query(
+    `delete from extracted_claims
+     where extraction_run_id in (
+       select id from extraction_runs where evidence_id = $1 and parser = $2
+     )`,
+    [evidenceId, PARSER_REPAIR],
+  );
+  await db.query("delete from extraction_runs where evidence_id = $1 and parser = $2", [evidenceId, PARSER_REPAIR]);
+}
+
+export async function closeResolvedRegistrationReviews(
+  db: Sql,
+  evidenceId: string,
+  entityRegistration: string | null,
+  included: boolean,
+): Promise<number> {
+  const claims = await workingClaims(db, evidenceId);
+  const extracted = workingValue(claims.find((c) => c.field_key === "registration_number"));
+  const matches = Boolean(
+    extracted && entityRegistration && normalizeRegistration(extracted) === normalizeRegistration(entityRegistration),
+  );
+  if (!included && !matches) return 0;
+  const reviews = await db.query<{ id: string }>(
+    `select id from review_items
+     where evidence_id = $1 and status in ('pending', 'in_review') and type = 'registration_number_conflict'`,
+    [evidenceId],
+  );
+  for (const review of reviews) {
+    await closeReview(db, {
+      reviewItemId: review.id,
+      actorId: ACTOR,
+      status: "approved",
+      resolution: included
+        ? "The linked entity's registration is printed on the certificate. Another company or verifier number on the same document was not copied onto it."
+        : "Re-extraction now matches the linked entity's registration number.",
+    });
+  }
+  return reviews.length;
 }
 
 export async function repairEvidenceBatch(

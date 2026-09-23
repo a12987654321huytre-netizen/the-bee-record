@@ -94,6 +94,15 @@ export function parseDate(raw: string | null | undefined, options: ParseDateOpti
       if (month) return validateIso(`${long[6]}-${month}-${pad(long[5])}`, trimmed);
     }
   }
+  const shortYear = trimmed.match(/^(\d{1,2})[/\-\s]+([A-Za-z]{3,9})[/\-\s]+(\d{2})$/);
+  if (shortYear) {
+    const month = MONTHS[shortYear[2]!.toLowerCase()];
+    const yy = Number(shortYear[3]);
+    if (month && Number.isFinite(yy)) {
+      const year = yy >= 80 ? 1900 + yy : 2000 + yy;
+      return validateIso(`${year}-${month}-${pad(shortYear[1]!)}`, trimmed);
+    }
+  }
   const slash = trimmed.match(DMY_SLASH);
   if (slash) {
     const a = Number(slash[1]);

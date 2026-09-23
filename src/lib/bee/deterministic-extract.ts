@@ -1,3 +1,4 @@
+import { isVerifierRegistration } from "./enrichment.ts";
 import { isPlausibleEntityName, isPlausibleSignatory } from "./claim-quality.ts";
 import { addDaysIso, addMonthsIso, daysBetween, parseDate } from "./dates.ts";
 import { normalizeBeeLevel } from "./level.ts";
@@ -7,13 +8,26 @@ import type { ExtractionClaim, ExtractionResult } from "./types.ts";
 const ZA_REG = /\b(\d{4}\s*\/\s*\d{6}\s*\/\s*\d{2})\b/g;
 
 const DATE_TOKEN =
-  /\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/\-\s]+[A-Za-z]{3,9}[/\-\s,]+\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|\d{1,2}[/\-.]\d{1,2}[/\-.]\d{4})\b/g;
+  /\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/\-\s]+[A-Za-z]{3,9}[/\-\s,]+\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|\d{1,2}[/\-\s]+[A-Za-z]{3,9}[/\-\s]+\d{2}|\d{1,2}[/\-.]\d{1,2}[/\-.]\d{4})\b/g;
 
-const ISSUE_LABEL =
-  /(?:original\s+)?(?<!from\s)(?:date\s+of\s+issue|issue\s+date|issued\s+on|issued\s+date)|certificate\s+date|effective\s+date\s+used|initial\s+issue\s+date/i;
+const ISSUE_SPECS: Array<{ source: string; priority: number }> = [
+  { source: "initial\\s+issue\\s+date", priority: 100 },
+  { source: "date\\s+of\\s+issue", priority: 90 },
+  { source: "date\\s+issued", priority: 88 },
+  { source: "issue\\s+date", priority: 80 },
+  { source: "issued\\s+on", priority: 70 },
+  { source: "issued\\s+date", priority: 70 },
+  { source: "certificate\\s+date", priority: 40 },
+];
 
-const EXPIRY_LABEL =
-  /(?:certificate\s+)?(?:date\s+of\s+)?expir(?:y|es|ation)(?:\s+date)?|valid\s+(?:until|to|thru|through)|verification\s+expir(?:y|ation)\s+date/i;
+const EXPIRY_SPECS: Array<{ source: string; priority: number }> = [
+  { source: "date\\s+of\\s+expir(?:y|ation)", priority: 90 },
+  { source: "expir(?:y|ation)\\s+date", priority: 90 },
+  { source: "verification\\s+expir(?:y|ation)\\s+date", priority: 90 },
+  { source: "date\\s+expired", priority: 88 },
+  { source: "expired\\s+date", priority: 80 },
+  { source: "valid\\s+(?:until|to|through|thru)", priority: 60 },
+];
 
 const AGENCY_NOISE =
   /\b(sanas\s+accredited|bva\s*\d+|reg(?:istration)?(?:\.|\s*)(?:no\.?|number).{0,20}\d{4}\s*\/\s*\d{6}|per\s+[A-Z]|member\s*[-–]\s*verification)\b/gi;
@@ -116,31 +130,47 @@ function nearestDate(
   return best;
 }
 
-function firstLabelIndex(text: string, label: RegExp): number {
-  const m = text.match(label);
-  if (!m || m.index == null) return -1;
-  return m.index;
+function isBoilerplateLabel(text: string, index: number): boolean {
+  const before = text.slice(Math.max(0, index - 90), index);
+  if (/\bfrom\s+(?:the\s+)?(?:original\s+)?$/i.test(before)) return true;
+  if (/\bvalid\s+for\b[\s\S]{0,50}$/i.test(before)) return true;
+  if (/\bgazette\b/i.test(before.slice(-50))) return true;
+  const lineStart = text.lastIndexOf("\n", Math.max(0, index - 1)) + 1;
+  const lineEnd = text.indexOf("\n", index);
+  const line = text.slice(lineStart, lineEnd < 0 ? text.length : lineEnd);
+  if (/^\s*(?:cor\b|rev(?:ision)?\b)/i.test(line)) return true;
+  return false;
 }
 
-function labeledDate(text: string, dates: LocatedDate[], label: RegExp): LocatedDate | null {
-  const re = new RegExp(label.source, "gi");
-  let m: RegExpExecArray | null;
-  let best: LocatedDate | null = null;
-  while ((m = re.exec(text))) {
-    const after = nearestDate(dates, m.index + m[0].length, "after", 160, true);
-    if (after) return after;
-    const before = nearestDate(dates, m.index, "before", 80, true);
-    if (before && !best) best = before;
+function bestLabeledDate(
+  text: string,
+  dates: LocatedDate[],
+  specs: Array<{ source: string; priority: number }>,
+): { date: LocatedDate; index: number } | null {
+  let best: { date: LocatedDate; index: number; priority: number } | null = null;
+  for (const spec of specs) {
+    const re = new RegExp(spec.source, "gi");
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) {
+      if (isBoilerplateLabel(text, m.index)) continue;
+      const after = nearestDate(dates, m.index + m[0].length, "after", 120, true);
+      const before = nearestDate(dates, m.index, "before", 40, true);
+      const date = after ?? before;
+      if (!date?.iso) continue;
+      if (!best || spec.priority > best.priority) {
+        best = { date, index: m.index, priority: spec.priority };
+      }
+    }
   }
-  return best;
+  return best ? { date: best.date, index: best.index } : null;
 }
 
 function pairedIssueExpiry(dates: LocatedDate[], text: string): { issue: LocatedDate; expiry: LocatedDate } | null {
-  const issueIdx = firstLabelIndex(text, ISSUE_LABEL);
-  const expiryIdx = firstLabelIndex(text, EXPIRY_LABEL);
-  if (issueIdx < 0 || expiryIdx < 0) return null;
-  const start = Math.max(0, Math.min(issueIdx, expiryIdx) - 120);
-  const end = Math.min(text.length, Math.max(issueIdx, expiryIdx) + 220);
+  const issueHit = bestLabeledDate(text, dates, ISSUE_SPECS);
+  const expiryHit = bestLabeledDate(text, dates, EXPIRY_SPECS);
+  if (!issueHit || !expiryHit) return null;
+  const start = Math.max(0, Math.min(issueHit.index, expiryHit.index) - 120);
+  const end = Math.min(text.length, Math.max(issueHit.index, expiryHit.index) + 220);
   const nearby = dates
     .map((d) => resolveLocated(d, true))
     .filter((d) => d.iso && d.index >= start && d.index <= end);
@@ -235,8 +265,11 @@ function extractRegistration(text: string): ExtractionClaim | null {
   }
   if (!all.length) return null;
 
-  const scored: Array<{ raw: string; score: number; labeled: boolean }> = [];
+  const annexureAt = text.search(/\bannexure\b/i);
+  const measuredAt = text.search(/measured\s+entity/i);
+  const scored: Array<{ raw: string; score: number; labeled: boolean; index: number }> = [];
   for (const item of all) {
+    if (isVerifierRegistration(item.raw)) continue;
     const ctx = lineWindow(text, item.index);
     if (isAgencyOwnedRegistration(ctx)) continue;
     const blob = `${ctx.previous} ${ctx.line}`;
@@ -244,14 +277,35 @@ function extractRegistration(text: string): ExtractionClaim | null {
       ctx.line,
     );
     let score = 1;
-    if (/measured\s+entity|company\s+name|enterprise\s+name/i.test(blob)) score += 3;
-    if (labeled) score += 1;
-    scored.push({ raw: item.raw, score, labeled });
+    if (/measured\s+entity|company\s+name|enterprise\s+name/i.test(blob)) score += 6;
+    if (labeled) score += 2;
+    if (annexureAt >= 0 && item.index > annexureAt) score -= 8;
+    if (/\bsubsidiar/i.test(ctx.line) && !/measured\s+entity/i.test(blob)) score -= 3;
+    if (measuredAt >= 0) {
+      const dist = Math.abs(item.index - measuredAt);
+      if (dist < 250) score += 4;
+      else if (dist < 700) score += 2;
+    }
+    scored.push({ raw: item.raw, score, labeled, index: item.index });
   }
-  scored.sort((a, b) => b.score - a.score);
+  scored.sort((a, b) => b.score - a.score || a.index - b.index);
   const best = scored[0];
   if (!best) return null;
   return claim("registration_number", best.raw, normalizeRegistration(best.raw), best.raw, null, best.labeled ? 0.9 : 0.78);
+}
+
+export function registrationAppearsInText(text: string, registration: string | null | undefined): boolean {
+  if (!registration || !text) return false;
+  const wanted = normalizeRegistration(registration);
+  if (!wanted) return false;
+  const re = new RegExp(ZA_REG.source, "g");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const raw = m[1]!;
+    if (isVerifierRegistration(raw)) continue;
+    if (normalizeRegistration(raw) === wanted) return true;
+  }
+  return false;
 }
 
 function cleanAgencyName(raw: string): string {
@@ -318,8 +372,8 @@ export function extractDeterministically(text: string): ExtractionResult {
   }
 
   const dates = locateDates(text);
-  let issue = labeledDate(text, dates, ISSUE_LABEL);
-  let expiry = labeledDate(text, dates, EXPIRY_LABEL);
+  let issue = bestLabeledDate(text, dates, ISSUE_SPECS)?.date ?? null;
+  let expiry = bestLabeledDate(text, dates, EXPIRY_SPECS)?.date ?? null;
   if (issue?.iso && issue.iso < "2020-01-01") {
     issue = null;
   }

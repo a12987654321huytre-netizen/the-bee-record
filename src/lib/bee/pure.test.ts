@@ -13,7 +13,7 @@ import { hashPassword, verifyPassword, checkPasswordChange, passwordPolicyError 
 import { evaluateAutomation, validateClaims } from "./validation.ts";
 import { formatWhen } from "./format.ts";
 import { workingValue } from "./claims.server.ts";
-import { cleanSupplierName, isJointVentureName, isMalformedCompanyName, companyInterpretation, companySummaryText, disclosureInterpretation } from "./disclosure.ts";
+import { cleanSupplierName, isJointVentureName, isMalformedCompanyName, isImportableShortLegalName, companyInterpretation, companySummaryText, disclosureInterpretation } from "./disclosure.ts";
 import { isModernProcurementEvidence, procurementQualifiesForPublicEntity, classifyEntityEligibility, evidenceDateEligibility } from "./recency.ts";
 import {
   formatEvidenceDateLabel,
@@ -301,6 +301,58 @@ describe("deterministic extractor", () => {
     assert.equal(fields.bee_level, "3");
     assert.notEqual(fields.expiry_date, fields.issue_date);
   });
+
+  it("prefers the initial issue date over a template issued stamp", () => {
+    const result = extractDeterministically(`
+      B-BBEE Verification Certificate
+      This certificate is valid for 12 months from the original date of issue
+      Issued: 08/09/2023
+      Measured entity: KAL GROUP LIMITED
+      Registration Number: 2011/113185/06
+      B-BBEE CONTRIBUTOR STATUS LEVEL: LEVEL 4
+      Verification Number TLVT10759-281125 Initial Issue Date: 28 November 2025
+      Expiry Date: 27 November 2026
+    `);
+    const fields = Object.fromEntries(result.claims.map((c) => [c.field, c.normalized_value]));
+    assert.equal(fields.issue_date, "2025-11-28");
+    assert.equal(fields.expiry_date, "2026-11-27");
+    assert.equal(fields.bee_level, "4");
+    assert.equal(fields.registration_number, "201111318506");
+  });
+
+  it("reads Date Issued and Date Expired, including a two-digit year", () => {
+    const result = extractDeterministically(`
+      B-BBEE Certificate
+      Measured entity: Ford Motor Company of Southern Africa (Manufacturing) (Pty) Ltd
+      Registration Number: 1923/002555/07
+      B-BBEE Status Level: Level 4
+      Date Issued: 05 May 2026
+      Date Expired: 04-May-27
+      Verification agency: MSCT BEE Services (Pty) Ltd
+    `);
+    const fields = Object.fromEntries(result.claims.map((c) => [c.field, c.normalized_value]));
+    assert.equal(fields.issue_date, "2026-05-05");
+    assert.equal(fields.expiry_date, "2027-05-04");
+    assert.equal(fields.bee_level, "4");
+    assert.equal(fields.registration_number, "192300255507");
+  });
+
+  it("keeps the measured entity registration ahead of an annexure company", () => {
+    const result = extractDeterministically(`
+      B-BBEE Certificate
+      Measured entity: Media24 (Pty) Ltd
+      Registration Number: 1950/038385/07
+      Level 2 Contributor
+      Issue date: 12 June 2026
+      Expiry date: 11 June 2027
+      Annexure A
+      Subsidiary Registration Number: 1996/012379/07
+    `);
+    const fields = Object.fromEntries(result.claims.map((c) => [c.field, c.normalized_value]));
+    assert.equal(fields.registration_number, "195003838507");
+    assert.equal(fields.issue_date, "2026-06-12");
+    assert.equal(fields.expiry_date, "2027-06-11");
+  });
 });
 
 describe("lifecycle classification", () => {
@@ -512,6 +564,12 @@ describe("procurement disclosure identity", () => {
     assert.equal(isMalformedCompanyName("SULTANTS (Pty) Ltd"), true);
     assert.equal(isMalformedCompanyName("Datacentrix (Pty) Ltd"), false);
     assert.equal(isMalformedCompanyName("XSCANN TECHNOLOGIES (PTY) LTD"), false);
+    assert.equal(isMalformedCompanyName("JSE Limited"), true);
+    assert.equal(isMalformedCompanyName("GWK Limited"), true);
+    assert.equal(isImportableShortLegalName("JSE Limited", "2005/022939/06"), true);
+    assert.equal(isImportableShortLegalName("GWK Limited", "1997/022252/06"), true);
+    assert.equal(isImportableShortLegalName("JSE Limited", "2002/001364/07"), false);
+    assert.equal(isImportableShortLegalName("Level 1", "2005/022939/06"), false);
     const division = cleanSupplierName("Konica Minolta South Africa - a division of Bidvest Office (Pty) Ltd");
     assert.equal(division.parentName?.includes("Bidvest"), true);
     assert.equal(companyInterpretation({ hasDisclosure: true }), "official_dated_disclosure");
@@ -963,6 +1021,42 @@ describe("repair claim merge", () => {
       linkedName: "Clover (Pty) Ltd",
     });
     assert.equal(out.claims.find((c) => c.field_key === "legal_entity_name")?.normalized_value, normalizeName("Clover (Pty) Ltd"));
+  });
+
+  it("replaces an unpublished template issue date with the re-extracted issue date", () => {
+    const out = mergeRepairClaims({
+      previous: [
+        {
+          field_key: "issue_date",
+          raw_value: "08/09/2023",
+          normalized_value: "2023-09-08",
+          edited_value: null,
+          confidence: 0.6,
+          source_snippet: "Issued",
+          parser: "deterministic/v1",
+          section: null,
+          edited_by: null,
+          edited_at: null,
+          published_state: "unpublished",
+          review_state: "pending",
+        },
+      ],
+      extracted: [
+        {
+          field: "issue_date",
+          raw_value: "28 November 2025",
+          normalized_value: "2025-11-28",
+          confidence: 0.86,
+          page: null,
+          locator: "Initial Issue Date",
+          warning: null,
+        },
+      ],
+      lockedFields: new Set(),
+      evidencePublished: false,
+    });
+    assert.equal(out.claims.find((c) => c.field_key === "issue_date")?.normalized_value, "2025-11-28");
+    assert.equal(out.conflicts.length, 0);
   });
 });
 

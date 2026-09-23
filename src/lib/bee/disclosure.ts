@@ -1,6 +1,7 @@
 import { collapseWhitespace, fold, normalizeName } from "./normalize.ts";
 import { sha256HexNode } from "./hash.ts";
 import { isDisclosureEvidence, isStatusEvidence } from "./constants.ts";
+import { isVerifierRegistration, isZaCompanyRegistration } from "./enrichment.ts";
 import { displayBeeLevel } from "./level.ts";
 import { evidenceDateEligibility } from "./recency.ts";
 
@@ -132,6 +133,26 @@ export function isMalformedCompanyName(name: string): boolean {
   if (FRAGMENT_STEMS.has(first)) return true;
   if (words.length === 1 && first.length < 5) return true;
   return false;
+}
+
+/**
+ * Operator imports of a real short legal name (JSE Limited, GWK Limited) with a
+ * company registration. Procurement junk still fails isMalformedCompanyName.
+ */
+export function isImportableShortLegalName(name: string, registration?: string | null): boolean {
+  if (!registration || !isZaCompanyRegistration(registration) || isVerifierRegistration(registration)) return false;
+  const t = collapseWhitespace(name);
+  if (!t || isJointVentureName(t)) return false;
+  if (URL_RE.test(t) || NOISE_NAME_RE.test(t) || DESC_PREFIX_RE.test(t) || PARSER_DEBRIS_RE.test(t)) return false;
+  if (!/\b(limited|ltd|proprietary|\(pty\))\b/i.test(t)) return false;
+  const core = t
+    .replace(/\b(proprietary|limited|ltd|pty|soc|inc|cc)\b/gi, " ")
+    .replace(/[^A-Za-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!/^[A-Za-z]{2,6}$/.test(core)) return false;
+  if (CORE_STOP.has(core.toLowerCase()) || FRAGMENT_STEMS.has(core.toLowerCase())) return false;
+  return true;
 }
 
 export function cleanSupplierName(raw: string): CleanedSupplier {

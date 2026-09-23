@@ -2,7 +2,8 @@ import { ensureAgency, ensureSignatory } from "./agencies.server.ts";
 import { audit } from "./audit.server.ts";
 import { workingClaims, workingValue } from "./claims.server.ts";
 import { RECOGNIZED_DOCUMENT_TYPES } from "./constants.ts";
-import { extractBva } from "./deterministic-extract.ts";
+import { extractBva, registrationAppearsInText } from "./deterministic-extract.ts";
+import { isCompanyDisclosureType } from "./latest-evidence.ts";
 import { extractEvidence } from "./extract.server.ts";
 import { safeFetch } from "./fetch.server.ts";
 import { newId } from "./ids.ts";
@@ -66,8 +67,14 @@ export async function applyClaimMetadata(db: Sql, evidenceId: string, claims: Ex
   const expiry = map.get("expiry_date") ?? null;
   const docType = map.get("document_type") ?? map.get("certificate_type") ?? null;
   const issuer = map.get("verification_agency") ?? null;
+  const current = await db.query<{ evidence_type: string }>("select evidence_type from evidence where id = $1", [evidenceId]);
+  const currentType = current[0]?.evidence_type ?? "";
+  const keepDisclosure =
+    isCompanyDisclosureType(currentType) ||
+    currentType === "government_procurement_disclosure" ||
+    currentType === "company_webpage";
   let typeUpdate: string | null = null;
-  if (docType === "bee_certificate" || docType === "sworn_affidavit") typeUpdate = docType;
+  if (!keepDisclosure && (docType === "bee_certificate" || docType === "sworn_affidavit")) typeUpdate = docType;
   await db.query(
     `update evidence set
         issue_date = coalesce($2, issue_date),
@@ -215,7 +222,21 @@ export async function processEvidence(
     return { reviewItemId, autoPublished: false, extractionFailed: true, warnings };
   }
 
-  if (match.conflict === "registration_number_conflict" || flags.some((f) => f.code === "registration_mismatch")) {
+  const includedOnCertificate = registrationAppearsInText(
+    input.text,
+    entity?.registration_number_normalized,
+  );
+  if (includedOnCertificate) {
+    match.uncertain = false;
+    match.conflict = undefined;
+    match.confidence = Math.max(match.confidence, 0.95);
+    match.reason = "The linked entity's registration number is printed on this certificate.";
+  }
+
+  if (
+    !includedOnCertificate &&
+    (match.conflict === "registration_number_conflict" || flags.some((f) => f.code === "registration_mismatch"))
+  ) {
     const reviewItemId = await ensureReviewItem(db, {
       type: "registration_number_conflict",
       reason: match.conflict === "registration_number_conflict"
