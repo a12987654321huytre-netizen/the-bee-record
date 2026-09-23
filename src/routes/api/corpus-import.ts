@@ -6,7 +6,7 @@ import {
   retryUnpublished,
   type CorpusItem,
 } from "@/lib/bee/corpus-import.server";
-import { auditPublicRecency, republishLegitimateHiddenEntities, unpublishStaleProcurementEntities } from "@/lib/bee/recency.server";
+import { auditPublicRecency, hideNamedEntities, republishLegitimateHiddenEntities, unpublishStaleProcurementEntities } from "@/lib/bee/recency.server";
 import { runDueSources, runSourceCheck } from "@/lib/bee/crawler.server";
 import {
   repairCorpusStats,
@@ -115,6 +115,7 @@ const bodySchema = z.object({
       "monitors",
       "dates",
       "republish",
+      "hide-names",
     ])
     .optional(),
   afterId: z.string().nullable().optional(),
@@ -256,6 +257,11 @@ export const Route = createFileRoute("/api/corpus-import")({
               dryRun: parsed.data.dryRun,
               limit: parsed.data.recencyLimit,
             });
+            return Response.json({ ...(await stats(db)), phase, ...out });
+          }
+          if (phase === "hide-names") {
+            const names = (parsed.data.items ?? []).map((item) => item.canonicalName);
+            const out = await hideNamedEntities(db, names);
             return Response.json({ ...(await stats(db)), phase, ...out });
           }
           const out = await auditPublicRecency(db);

@@ -14,6 +14,8 @@ const NOISE_NAME_RE =
   /^(n\/?a|none|tbc|tba|various|multiple|not\s+applicable|see\s+above|supplier|bidder|company|name of bidder|successful bidder)$/i;
 const FRAG_START_RE =
   /^(pty\)|ltd|cc|inc|limited|tion|ing|vices|tors|prise|tions|care|school|solutions|projects|manufacturers|surveyors|recruitment|struction|sultants|sulting|plies|ments|trol|neers|gineers|neering|tium|terprise|ogies|lishers|and |of |the |for |to |new |all )\b/i;
+const PARSER_DEBRIS_RE =
+  /\b(contract number|description of contract|bbbee level|value of award|shall become|ruugby|completion period of weeks|logistics & contract administration|rescue & disaster management)\b|^visit\s|^municipality\s/i;
 const DESC_PREFIX_RE =
   /^(supply|deliver|appointment|provision|service of|bi-annual|single |dual |hiring |lease |maintenance |repair |installation |rendering |dressing |infrastructure |the supply|request for |tender for )/i;
 const CORE_STOP = new Set([
@@ -110,7 +112,7 @@ export function isMalformedCompanyName(name: string): boolean {
   if (t.split(/\s+/).length > 16) return true;
   if (t[0] && t[0] === t[0].toLowerCase() && /[a-z]/.test(t[0])) return true;
   if (FRAG_START_RE.test(t)) return true;
-  if (DESC_PREFIX_RE.test(t) || /\bx\s*\d+\b/i.test(t)) return true;
+  if (DESC_PREFIX_RE.test(t) || PARSER_DEBRIS_RE.test(t) || /\bx\s*\d+\b/i.test(t)) return true;
   if (/\bprovinces\b/i.test(t)) return true;
   const letters = t.replace(/[^A-Za-z]/g, "");
   if (letters.length < 6) return true;

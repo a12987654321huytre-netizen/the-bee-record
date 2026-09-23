@@ -332,6 +332,40 @@ function rejectReason(name: string): string | null {
   return null;
 }
 
+const HIDE_ACTOR = "import:hide-parser-debris-2026";
+
+/** Unpublish exact canonical names that are parser debris. Evidence is retained. */
+export async function hideNamedEntities(
+  db: Sql,
+  names: string[],
+): Promise<{ matched: number; hidden: number; names: string[] }> {
+  const cleaned = [...new Set(names.map((name) => name.trim()).filter((name) => name.length >= 2))];
+  if (!cleaned.length) return { matched: 0, hidden: 0, names: [] };
+  const rows = await db.query<{ id: string; canonical_name: string }>(
+    `select id, canonical_name from entities
+     where merged_into_id is null
+       and visibility = 'public'
+       and lower(canonical_name) = any($1::text[])`,
+    [cleaned.map((name) => name.toLowerCase())],
+  );
+  if (!rows.length) return { matched: 0, hidden: 0, names: [] };
+  await db.query(
+    `update entities set visibility = 'hidden', updated_at = now()
+     where id = any($1::text[]) and visibility = 'public'`,
+    [rows.map((row) => row.id)],
+  );
+  await db.query(
+    `insert into audit_logs
+       (id, actor_type, actor_id, action, target_type, target_id, before_state, after_state, reason)
+     select u.id, 'import', $2, 'entity.hidden', 'entity', u.target_id,
+            '{"visibility":"public"}', '{"visibility":"hidden"}',
+            'Hidden parser debris. Evidence retained. Not a company record.'
+       from unnest($1::text[], $3::text[]) as u(id, target_id)`,
+    [rows.map(() => newId("aud")), HIDE_ACTOR, rows.map((row) => row.id)],
+  );
+  return { matched: rows.length, hidden: rows.length, names: rows.map((row) => row.canonical_name) };
+}
+
 export async function republishLegitimateHiddenEntities(
   db: Sql,
   input: { dryRun?: boolean; limit?: number } = {},
