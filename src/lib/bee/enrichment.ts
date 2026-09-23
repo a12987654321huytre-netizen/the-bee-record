@@ -115,9 +115,9 @@ export const NON_INDUSTRY_SECTOR_IDS = {
 } as const;
 
 const INDUSTRY_RULES: Array<{ re: RegExp; id: string }> = [
-  { re: /\bpharmac(?:y|eutical|are)?s?\b/i, id: "sec_pharma" },
+  { re: /\bpharma(?:cy|ceutical|ceuticals|care)?s?\b/i, id: "sec_pharma" },
   { re: /\b(?:medical aid|medical scheme)\b/i, id: "sec_insurance" },
-  { re: /\b(?:healthcare|hospital|hospitals|clinic|clinics)\b/i, id: "sec_healthcare" },
+  { re: /\b(?:healthcare|hospital|hospitals|clinic|clinics|health)\b/i, id: "sec_healthcare" },
   { re: /\bmedical\b/i, id: "sec_healthcare" },
   { re: /\bbanks?\b|\bbanking\b/i, id: "sec_banking" },
   { re: /\b(?:insurance|insurers?|underwriters?)\b/i, id: "sec_insurance" },
@@ -130,7 +130,7 @@ const INDUSTRY_RULES: Array<{ re: RegExp; id: string }> = [
   { re: /\b(?:accountant|accountants|auditors?)\b/i, id: "sec_accounting" },
   { re: /\b(?:recruitment|staffing)\b/i, id: "sec_recruitment" },
   { re: /\b(?:logistic(?:s)?|freight|courier)\b/i, id: "sec_logistics" },
-  { re: /\b(?:transport|trucking|haulage|vervoer)\b/i, id: "sec_transport" },
+  { re: /\b(?:transport|trucking|haulage|vervoer|trucks?|buses?)\b/i, id: "sec_transport" },
   { re: /\b(?:security|guarding|sekuriteit)\b/i, id: "sec_security" },
   { re: /\b(?:cleaning|cleaners?|hygiene|sanitary|facilities)\b/i, id: "sec_facilities" },
   { re: /\b(?:hotel|hotels|hospitality|lodge|guesthouse|guest house)\b/i, id: "sec_hospitality" },
@@ -138,16 +138,16 @@ const INDUSTRY_RULES: Array<{ re: RegExp; id: string }> = [
   { re: /\b(?:agricultur\w*|farming|farms?|boerdery|\bagri\b)\b/i, id: "sec_agriculture" },
   { re: /\b(?:propert(?:y|ies)|eiendom(?:me)?|\breit\b)\b/i, id: "sec_property" },
   { re: /\b(?:energy|energies|solar|petroleum|renewable)\b/i, id: "sec_energy" },
-  { re: /\b(?:software|\bict\b|cyber)\b/i, id: "sec_ict" },
+  { re: /\b(?:software|\bict\b|cyber|electronics)\b/i, id: "sec_ict" },
   { re: /\b(?:telecom(?:munication)?s?|cellular)\b/i, id: "sec_telecoms" },
   { re: /\b(?:retail(?:er)?s?|supermarket|wholesalers?)\b/i, id: "sec_retail" },
   { re: /\b(?:foods?|catering|beverage|beverages|bakery)\b/i, id: "sec_food" },
   { re: /\b(?:print(?:ing|ers)?)\b/i, id: "sec_printing" },
-  { re: /\b(?:automotive|motors?|vehicles?|tyres?|tires?)\b/i, id: "sec_automotive" },
+  { re: /\b(?:automotive|motors?|vehicles?|tyres?|tires?|auto)\b/i, id: "sec_automotive" },
   { re: /\bmanufactur/i, id: "sec_manufacturing" },
   { re: /\b(?:steel|welding|fabrication|pipes|fittings|cables)\b/i, id: "sec_industrial" },
   { re: /\b(?:media|broadcast(?:ing)?|publishing)\b/i, id: "sec_media" },
-  { re: /\bconsult(?:ing|ancy|ants?)?\b/i, id: "sec_professional" },
+  { re: /\bconsult(?:ing|ancy|ants?)?\b|\bforensic\b/i, id: "sec_professional" },
 ];
 
 /**
