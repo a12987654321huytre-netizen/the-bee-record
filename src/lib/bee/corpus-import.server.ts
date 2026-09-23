@@ -688,7 +688,7 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
   if (!hasProcurement) {
     for (const ev of item.evidence ?? []) {
       if (ev.url && !sourceUrls.has(ev.url)) {
-        sourceUrls.set(ev.url, { url: ev.url, sourceType: "certificate", frequency: "monthly" });
+        sourceUrls.set(ev.url, { url: ev.url, sourceType: "direct_evidence_url", frequency: "monthly" });
       }
     }
     if (item.website && !sourceUrls.has(item.website)) {
@@ -771,11 +771,27 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
           [ingested.evidenceId],
         );
         const linkedHere = links.some((l) => l.entity_id === entityId);
+        if (!linkedHere) {
+          await db.query(
+            `insert into evidence_entity_links
+              (id, evidence_id, entity_id, link_state, extracted_name, match_method, confidence, registration_match, reason)
+             values ($1,$2,$3,'confirmed',$4,'import',1,0,$5)`,
+            [
+              newId("lnk"),
+              ingested.evidenceId,
+              entityId,
+              name,
+              "Named legal entity is included on this already stored document.",
+            ],
+          );
+        }
         const publishedAlready = await db.query<{ publication_state: string }>(
           "select publication_state from evidence where id = $1",
           [ingested.evidenceId],
         );
-        if (publishedAlready[0]?.publication_state === "published" || !linkedHere) {
+        if (publishedAlready[0]?.publication_state === "published") {
+          row.published = true;
+          result.published = true;
           result.evidence.push(row);
           continue;
         }
