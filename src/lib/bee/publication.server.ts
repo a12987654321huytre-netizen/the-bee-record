@@ -2,6 +2,7 @@ import { audit } from "./audit.server.ts";
 import { workingClaims, workingValue } from "./claims.server.ts";
 import { RECOGNIZED_DOCUMENT_TYPES } from "./constants.ts";
 import { isDisclosureEvidence } from "./constants.ts";
+import { isCompanyDisclosureType } from "./latest-evidence.ts";
 import { compareIso, expiryStatus, todayIso, toIsoDate } from "./dates.ts";
 import { newId } from "./ids.ts";
 import { canonicalFieldKey, isPublicClaimValue } from "./claim-quality.ts";
@@ -348,7 +349,7 @@ export async function publishEvidence(
   if (!evidence) return { ok: false, error: "Evidence not found." };
 
   const claims = await workingClaims(db, input.evidenceId);
-  const disclosure = isDisclosureEvidence(evidence.evidence_type);
+  const disclosure = isDisclosureEvidence(evidence.evidence_type) || isCompanyDisclosureType(evidence.evidence_type);
   const claimFields = presentFields(claims);
   const fields = disclosure ? new Map<string, string>() : claimFields;
   const issueDate = toIsoDate(
@@ -457,10 +458,10 @@ export async function publishEvidence(
          review_state = 'approved',
          lifecycle_state = $2,
          issue_date = coalesce($3, issue_date),
-         expiry_date = coalesce($4, expiry_date),
+         expiry_date = case when $5 then null else coalesce($4, expiry_date) end,
          updated_at = now()
      where id = $1`,
-    [input.evidenceId, lifecycle, issueDate, disclosure ? null : expiryDate],
+    [input.evidenceId, lifecycle, issueDate, disclosure ? null : expiryDate, disclosure],
   );
 
   const existingLink = await db.query<{ id: string }>(

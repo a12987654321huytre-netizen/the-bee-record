@@ -253,7 +253,7 @@ export async function listPublicCompanies(
       join evidence_entity_links l on l.evidence_id = ev.id
       where l.entity_id = e.id and l.link_state in ('confirmed','extracted')
         and ev.publication_state = 'published'
-        and ev.evidence_type in ('company_disclosure','annual_report','integrated_report','esg_report','sustainability_report','transformation_report','investor_document')
+        and ev.evidence_type in ('company_disclosure','company_webpage','annual_report','integrated_report','esg_report','sustainability_report','transformation_report','investor_document')
         and ev.issue_date is not null and ev.issue_date >= '2024-01-01'
     )`);
   } else if (input.evidenceType === "historical_disclosure" || input.evidenceType === "historical_evidence") {
@@ -521,6 +521,23 @@ export async function getPublicEntity(db: Sql, slug: string) {
     "select id, event_type, summary, published_at, evidence_id, previous_evidence_id from publication_events where entity_id = $1 order by published_at desc",
     [entity.id],
   );
+  const included = await db.query<{
+    id: string;
+    title: string | null;
+    source_url: string | null;
+    evidence_type: string;
+    lifecycle_state: string;
+    issue_date: string | null;
+    expiry_date: string | null;
+    reason: string | null;
+  }>(
+    `select ev.id, ev.title, ev.source_url, ev.evidence_type, ev.lifecycle_state, ev.issue_date, ev.expiry_date, l.reason
+     from evidence_entity_links l
+     join evidence ev on ev.id = l.evidence_id
+     where l.entity_id = $1 and l.link_state = 'included' and ev.publication_state = 'published'
+     order by ev.issue_date desc nulls last, ev.id desc`,
+    [entity.id],
+  );
   const agency =
     current[0]?.verifier_agency_id
       ? (
@@ -544,6 +561,7 @@ export async function getPublicEntity(db: Sql, slug: string) {
     events,
     agency,
     supporting,
+    included,
   };
 }
 

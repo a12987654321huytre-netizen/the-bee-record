@@ -1,7 +1,7 @@
 import { audit } from "./audit.server.ts";
 import { jsonText, type Sql } from "./db-types.ts";
 import { newId } from "./ids.ts";
-import { isJointVentureName, isMalformedCompanyName } from "./disclosure.ts";
+import { isImportableShortLegalName, isJointVentureName, isMalformedCompanyName } from "./disclosure.ts";
 import {
   classifyEntityEligibility,
   looksLikeUnaffiliatedPerson,
@@ -324,9 +324,9 @@ export type RepublishReport = {
   republishedSamples: Array<{ name: string; slug: string; state: PublicCorpusState }>;
 };
 
-function rejectReason(name: string): string | null {
+function rejectReason(name: string, registration?: string | null): string | null {
   if (isJointVentureName(name)) return "joint venture or consortium";
-  if (isMalformedCompanyName(name)) return "malformed name";
+  if (isMalformedCompanyName(name) && !isImportableShortLegalName(name, registration)) return "malformed name";
   if (looksLikeUnaffiliatedPerson(name)) return "looks like a person, not a company";
   if (/\(\s*\(/.test(name)) return "malformed punctuation";
   return null;
@@ -374,9 +374,10 @@ export async function republishLegitimateHiddenEntities(
     id: string;
     slug: string;
     canonical_name: string;
+    registration_number: string | null;
     evidence: StaleEntityRow["evidence"] | string | null;
   }>(
-    `select e.id, e.slug, e.canonical_name,
+    `select e.id, e.slug, e.canonical_name, e.registration_number,
             coalesce(json_agg(json_build_object(
               'id', ev.id,
               'type', ev.evidence_type,
@@ -394,13 +395,13 @@ export async function republishLegitimateHiddenEntities(
      left join evidence_entity_links l on l.entity_id = e.id and l.link_state in ('confirmed','extracted')
      left join evidence ev on ev.id = l.evidence_id and ev.publication_state = 'published'
      where e.visibility = 'hidden' and e.merged_into_id is null
-     group by e.id, e.slug, e.canonical_name`,
+     group by e.id, e.slug, e.canonical_name, e.registration_number`,
   );
   const rejectedSamples: RepublishReport["rejectedSamples"] = [];
   const accepted: Array<{ id: string; slug: string; name: string; state: PublicCorpusState }> = [];
   for (const row of rows) {
     const evidence = parseEvidence(row.evidence);
-    const reason = rejectReason(row.canonical_name);
+    const reason = rejectReason(row.canonical_name, row.registration_number);
     if (!evidence.length) {
       if (rejectedSamples.length < 30) rejectedSamples.push({ name: row.canonical_name, reason: "no published evidence" });
       continue;

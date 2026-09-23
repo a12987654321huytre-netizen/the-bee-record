@@ -4,6 +4,7 @@ import { resolveEvidenceDate, type EvidenceDateInput, type ResolvedEvidenceDate 
 
 export const COMPANY_DISCLOSURE_TYPES = [
   "company_disclosure",
+  "company_webpage",
   "annual_report",
   "integrated_report",
   "esg_report",

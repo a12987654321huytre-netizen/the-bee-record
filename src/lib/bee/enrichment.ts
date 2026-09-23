@@ -23,6 +23,8 @@ export const VERIFIER_REGISTRATIONS = new Set([
   "200200136407", // AQRate (Pty) Ltd
   "200101796307", // Empowerdex (Pty) Ltd (certificate footer)
   "200102796307", // Empowerdex (Pty) Ltd (SANAS)
+  "200501773707", // Honeycomb BEE Ratings (Pty) Ltd
+  "200400940507", // Premier Verification (Pty) Ltd — certificate header, not the measured entity
 ]);
 
 export function isVerifierRegistration(value: string | null | undefined): boolean {

@@ -242,6 +242,33 @@ function CompanyPage() {
               </div>
             )}
 
+            {data.included.length ? (
+              <>
+                <h2 className="mt-10 font-display text-2xl">Included on a group certificate</h2>
+                <p className="mt-1 text-sm text-muted">
+                  This company is named on someone else’s measured-entity certificate. That is not an independent
+                  B-BBEE certificate for this company, and the group level is not copied onto it.
+                </p>
+                <ol className="mt-3 border-t border-rule">
+                  {data.included.map((ev) => (
+                    <li key={ev.id} className="border-b border-rule py-3">
+                      <p>
+                        <Link to="/evidence/$id" params={{ id: ev.id }} className="hover:underline">
+                          {ev.title ?? ev.id}
+                        </Link>
+                      </p>
+                      <p className="mt-1 text-sm text-muted">
+                        <LifecycleBadge state={ev.lifecycle_state} />
+                        {ev.issue_date ? <span> · issued <DateCell value={ev.issue_date} /></span> : null}
+                        {ev.expiry_date ? <span> · expires <DateCell value={ev.expiry_date} /></span> : null}
+                      </p>
+                      <p className="mt-1 text-sm">{ev.reason}</p>
+                    </li>
+                  ))}
+                </ol>
+              </>
+            ) : null}
+
             <h2 className="mt-10 font-display text-2xl">Evidence timeline</h2>
             {dated.length || undated.length ? (
               <ol className="mt-3 border-t border-rule">

@@ -76,6 +76,10 @@ export type CorpusItem = {
   sources?: CorpusSource[];
   procurement?: ProcurementDisclosureInput[];
   publishIfSafe?: boolean;
+  /** Explicit operator import of a pre-2024 official procurement record. Still historical, never current. */
+  allowHistoricalProcurement?: boolean;
+  /** Link an already published group document without copying it as this company's own certificate. */
+  includedOnly?: { url: string; measuredEntityName: string };
 };
 
 export type ImportItemResult = {
@@ -584,7 +588,7 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
     })),
   );
   const hasCertificateEvidence = Boolean(item.evidence?.length);
-  if (!existing && procurementRows.length && !hasCertificateEvidence && !procurementModern) {
+  if (!existing && procurementRows.length && !hasCertificateEvidence && !procurementModern && !item.allowHistoricalProcurement) {
     result.skipped = true;
     result.skipReason = "pre_2024_procurement";
     result.error =
@@ -732,6 +736,53 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
   const days = await getExpiringSoonDays(db);
   const shouldPublish = item.publishIfSafe !== false;
 
+  if (item.includedOnly?.url) {
+    const parentUrl = item.includedOnly.url;
+    const parents = await db.query<{ id: string; publication_state: string }>(
+      `select id, publication_state from evidence
+       where source_url = $1 or discovered_url = $1 or canonical_url = $1
+       order by case when publication_state = 'published' then 0 else 1 end, created_at desc
+       limit 1`,
+      [parentUrl],
+    );
+    const parent = parents[0];
+    if (!parent || parent.publication_state !== "published") {
+      result.error = "Group document is not published yet, so this company was not linked as an included entity.";
+      result.evidence.push({ url: parentUrl, kind: "included", error: result.error });
+      return result;
+    }
+    const existingLink = await db.query<{ id: string; link_state: string }>(
+      "select id, link_state from evidence_entity_links where evidence_id = $1 and entity_id = $2 limit 1",
+      [parent.id, entityId],
+    );
+    if (!existingLink[0]) {
+      await db.query(
+        `insert into evidence_entity_links
+          (id, evidence_id, entity_id, link_state, extracted_name, match_method, confidence, registration_match, reason)
+         values ($1,$2,$3,'included',$4,'import',1,1,$5)`,
+        [
+          newId("lnk"),
+          parent.id,
+          entityId,
+          name,
+          `Named on the group document measured for ${item.includedOnly.measuredEntityName}. Not an independent certificate for this company.`,
+        ],
+      );
+    }
+    await db.query(
+      "update entities set visibility = 'public', updated_at = now() where id = $1 and visibility in ('draft', 'hidden')",
+      [entityId],
+    );
+    result.published = true;
+    result.evidence.push({
+      url: parentUrl,
+      evidenceId: parent.id,
+      published: true,
+      kind: "included",
+    });
+    return result;
+  }
+
   for (const disclosure of item.procurement ?? []) {
     try {
       const row = await importProcurementDisclosure(db, {
@@ -857,7 +908,7 @@ export async function importCorpusItem(db: Sql, item: CorpusItem): Promise<Impor
   }
 
   if (result.published) {
-    const canPublicize = hasCertificateEvidence || !procurementRows.length || procurementModern;
+    const canPublicize = hasCertificateEvidence || !procurementRows.length || procurementModern || Boolean(item.allowHistoricalProcurement);
     if (canPublicize) {
       await db.query(
         "update entities set visibility = 'public', updated_at = now() where id = $1 and visibility in ('draft', 'hidden')",

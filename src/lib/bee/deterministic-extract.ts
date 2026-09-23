@@ -214,6 +214,8 @@ function extractLevel(text: string): ExtractionClaim | null {
     /b-?bbee\s+status(?:\s+level)?[:\s]+(?:a\s+)?level\s*(one|two|three|four|five|six|seven|eight|[1-8])/i,
     /(?:final\s+)?b-?bbee\s+status[:\s]+(?:a\s+)?level\s*(one|two|three|four|five|six|seven|eight|[1-8])/i,
     /(?:broad[-\s]*based\s+bee\s+status\s+level|contributor\s+status)[:\s]+(?:a\s+)?level\s*(one|two|three|four|five|six|seven|eight|[1-8])/i,
+    /(?:rating|status)\s+(?:was\s+)?(?:confirmed\s+)?(?:at|of|is)\s+(?:a\s+)?level\s*(one|two|three|four|five|six|seven|eight|[1-8])/i,
+    /(?:achieved|acquired|retained|maintained|awarded)\s+(?:a\s+)?level\s*(one|two|three|four|five|six|seven|eight|[1-8])/i,
     /level\s*(one|two|three|four|five|six|seven|eight|[1-8])[^\n.]{0,24}contributor/i,
     /a\s+level\s*(one|two|three|four|five|six|seven|eight|[1-8])\s+contributor/i,
     /b-?bbee[^\n.]{0,40}level\s*(one|two|three|four|five|six|seven|eight|[1-8])/i,
@@ -372,8 +374,12 @@ export function extractDeterministically(text: string): ExtractionResult {
   }
 
   const dates = locateDates(text);
-  let issue = bestLabeledDate(text, dates, ISSUE_SPECS)?.date ?? null;
-  let expiry = bestLabeledDate(text, dates, EXPIRY_SPECS)?.date ?? null;
+  const issueHit = bestLabeledDate(text, dates, ISSUE_SPECS);
+  const expiryHit = bestLabeledDate(text, dates, EXPIRY_SPECS);
+  let issue = issueHit?.date ?? null;
+  let expiry = expiryHit?.date ?? null;
+  const issueFromLabel = Boolean(issue?.iso);
+  const expiryFromLabel = Boolean(expiry?.iso);
   if (issue?.iso && issue.iso < "2020-01-01") {
     issue = null;
   }
@@ -387,10 +393,17 @@ export function extractDeterministically(text: string): ExtractionResult {
   }
 
   if (issue?.iso && expiry?.iso && issue.iso > expiry.iso) {
-    const swapped = issue;
-    issue = expiry;
-    expiry = swapped;
-    warnings.push("Issue and expiry dates were swapped because the labelled expiry was earlier than the issue date.");
+    if (issueFromLabel && expiryFromLabel) {
+      expiry = null;
+      warnings.push(
+        "Labelled issue date is after the labelled expiry. The expiry was left unused instead of reversing the two dates.",
+      );
+    } else {
+      const swapped = issue;
+      issue = expiry;
+      expiry = swapped;
+      warnings.push("Issue and expiry dates were swapped because the labelled expiry was earlier than the issue date.");
+    }
   }
 
   if (issue?.iso && expiry?.iso && issue.iso === expiry.iso) {

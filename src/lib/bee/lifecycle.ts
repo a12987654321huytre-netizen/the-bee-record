@@ -1,4 +1,5 @@
 import { STATUS_EVIDENCE_TYPES, RECOGNIZED_DOCUMENT_TYPES, isDisclosureEvidence } from "./constants.ts";
+import { isCompanyDisclosureType } from "./latest-evidence.ts";
 import { canonicalFieldKey, isPublicClaimValue } from "./claim-quality.ts";
 import { compareIso, expiryStatus, toIsoDate } from "./dates.ts";
 
@@ -85,8 +86,12 @@ export function classifyPublishedEvidence(
     };
   }
 
-  const disclosures = published.filter((r) => isDisclosureEvidence(r.evidence_type));
-  const certificateClass = published.filter((r) => !isDisclosureEvidence(r.evidence_type));
+  const disclosures = published.filter(
+    (r) => isDisclosureEvidence(r.evidence_type) || isCompanyDisclosureType(r.evidence_type),
+  );
+  const certificateClass = published.filter(
+    (r) => !isDisclosureEvidence(r.evidence_type) && !isCompanyDisclosureType(r.evidence_type),
+  );
 
   for (const row of disclosures) {
     decisions.set(row.id, "historical");

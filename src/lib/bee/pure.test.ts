@@ -242,6 +242,47 @@ describe("deterministic extractor", () => {
     assert.equal(fields.verification_agency, normalizeName("EmpowerLogic (Pty) Ltd"));
   });
 
+  it("does not take Honeycomb or Premier Verification registrations as the measured entity", () => {
+    const honeycomb = extractDeterministically(`
+      Registration Number: 1952/003004/06 and 1966/007612/06
+      Level One (1) Contributor
+      Honeycomb BEE Ratings (Pty) Ltd Reg No. 2005/017737/07
+      Issue Date 22 January 2025
+      Expiry Date 21 January 2026
+      B-BBEE Verification Certificate
+    `);
+    const h = Object.fromEntries(honeycomb.claims.map((c) => [c.field, c.normalized_value]));
+    assert.equal(h.registration_number, "195200300406");
+    assert.notEqual(h.registration_number, "200501773707");
+    assert.equal(h.issue_date, "2025-01-22");
+    assert.equal(h.expiry_date, "2026-01-21");
+
+    const premier = extractDeterministically(`
+      Company Reg: 2004/009405/07
+      B-BBEE Verification Certificate for Webber Wentzel
+      Company Registration: Partnership
+      LEVEL ONE (1) CONTRIBUTOR
+      Issue Date 08 June 2022
+      Expiry Date 07 June 2023
+    `);
+    assert.equal(premier.claims.find((c) => c.field === "registration_number"), undefined);
+    assert.equal(premier.claims.find((c) => c.field === "bee_level")?.normalized_value, "1");
+  });
+
+  it("does not reverse labelled issue and expiry dates", () => {
+    const result = extractDeterministically(`
+      B-BBEE Certificate
+      Measured entity: Example Logistics (Pty) Ltd
+      Registration Number: 1993/003465/07
+      Issue Date: 29 August 2026
+      Expiry Date: 28 August 2025
+    `);
+    const fields = Object.fromEntries(result.claims.map((c) => [c.field, c.normalized_value]));
+    assert.equal(fields.issue_date, "2026-08-29");
+    assert.equal(fields.expiry_date, undefined);
+    assert.match(result.warnings.join(" "), /left unused instead of reversing/);
+  });
+
   it("reads Mosela-style certificates without taking the gazette date or agency registration", () => {
     const text = `
       This certificate has been issued in terms of Government Gazette dated 01 December 2017 and it is valid for one year from date of issue.
@@ -498,23 +539,25 @@ describe("lifecycle classification", () => {
     assert.equal(result.currentEvidenceId, null);
   });
 
-  it("does not treat a non-certificate with no expiry as current", () => {
+  it("does not treat a company report as a current certificate, even with an expiry date", () => {
     const result = classifyPublishedEvidence(
       [
         {
           id: "evd_report",
           evidence_type: "annual_report",
           issue_date: "2025-09-01",
-          expiry_date: null,
+          expiry_date: "2026-12-31",
           discovered_at: "2025-09-02",
           publication_state: "published",
+          bee_level: "4",
         },
       ],
       "2026-09-18",
       90,
     );
-    assert.equal(result.decisions[0]?.lifecycle, "unknown_validity");
+    assert.equal(result.decisions[0]?.lifecycle, "historical");
     assert.equal(result.currentEvidenceId, null);
+    assert.equal(result.supportingEvidenceId, null);
   });
 
   it("does not mix two legal entities", () => {
