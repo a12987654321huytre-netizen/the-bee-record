@@ -9,7 +9,7 @@ import { resolve } from "node:path";
 const PROD = process.env.CORPUS_IMPORT_URL ?? "https://the-bee-record.vercel.app";
 const tokenPath = resolve(process.cwd(), ".corpus-import-token");
 const corpusPath = resolve(process.cwd(), process.argv[2] ?? "data/procurement/corpus-new.json");
-const logPath = resolve(process.cwd(), "data/procurement-import-log.jsonl");
+const logPath = resolve(process.cwd(), process.env.CORPUS_LOG ?? "data/procurement-import-log.jsonl");
 
 const token = readFileSync(tokenPath, "utf8").trim();
 const corpus = JSON.parse(readFileSync(corpusPath, "utf8"));

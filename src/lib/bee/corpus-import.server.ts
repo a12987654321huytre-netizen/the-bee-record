@@ -37,6 +37,10 @@ export const CORPUS_IMPORT_TOKEN_SHA256 =
 const CORPUS_IMPORT_TOKEN_SHA256_BATCH =
   "d85c0f9e775e7f30b17693699926133255362424fba381cb648d576cead652ea";
 
+/** Third corpus-import bearer (sandbox restore). Same scope as the others. */
+const CORPUS_IMPORT_TOKEN_SHA256_SCALE5K =
+  "974973bacfc777101716bd1462b5b17ff2c0b3711d4594b11258ca5e265b7f22";
+
 const ACTOR = "import:corpus-2026";
 
 export type CorpusEvidence = {
@@ -124,7 +128,8 @@ export function authorizeCorpusImport(header: string | null): boolean {
   if (cron && token === cron) return true;
   const digest = sha256HexNode(token);
   if (hashesEqual(digest, CORPUS_IMPORT_TOKEN_SHA256)) return true;
-  return hashesEqual(digest, CORPUS_IMPORT_TOKEN_SHA256_BATCH);
+  if (hashesEqual(digest, CORPUS_IMPORT_TOKEN_SHA256_BATCH)) return true;
+  return hashesEqual(digest, CORPUS_IMPORT_TOKEN_SHA256_SCALE5K);
 }
 
 async function findExistingEntity(
