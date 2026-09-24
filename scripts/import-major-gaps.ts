@@ -276,6 +276,38 @@ for (const item of MAJOR_GAP_ITEMS) {
   }
 }
 
+const PREFIX_NOISE = [
+  "YES 2 HOPE AND CARLEE CIVILS",
+  "YES 4 KHABO KEDI WASTE MANAGENT",
+  "YES 3 PHAMBILI CIVILS (Pty) Ltd",
+  "YES 7 LEAFY SPACE (Pty) Ltd",
+  "NO 7 MABERT ELECTRICAL SOLUTIONS",
+  "NO 14 ALSU ONDERNEMINGS (Pty) Ltd",
+];
+const prefixHidden = await db.query<{ id: string; canonical_name: string }>(
+  `update entities
+     set visibility = 'hidden', updated_at = now()
+   where merged_into_id is null
+     and visibility = 'public'
+     and canonical_name = any($1::text[])
+   returning id, canonical_name`,
+  [PREFIX_NOISE],
+);
+for (const row of prefixHidden) {
+  await db.query(
+    `insert into audit_logs
+       (id, actor_type, actor_id, action, target_type, target_id, before_state, after_state, reason)
+     values ($1, 'import', 'import:scale-batch-1', 'entity.hidden', 'entity', $2,
+             '{"visibility":"public"}', '{"visibility":"hidden"}', $3)`,
+    [
+      newId("aud"),
+      row.id,
+      "Bidder-register row number was glued onto the supplier name. The supplier remains under the name without that prefix.",
+    ],
+  );
+  console.log(`[major-gap] hid prefixed bidder name ${row.canonical_name}`);
+}
+
 const hidden = await db.query<{ id: string; canonical_name: string }>(
   `update entities
      set visibility = 'hidden', updated_at = now()

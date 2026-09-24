@@ -94,8 +94,18 @@ def clean_bidder(raw: str) -> str:
     return sp.clean_name(name)
 
 
+REJECTS: Counter = Counter()
+
+
 def accept_name(name: str) -> str | None:
-    if not name or sp.is_jv(name) or sp.malformed(name):
+    if not name:
+        REJECTS["empty"] += 1
+        return None
+    if sp.is_jv(name):
+        REJECTS["jv"] += 1
+        return None
+    if sp.malformed(name):
+        REJECTS["malformed"] += 1
         return None
     if re.search(
         r"\b(officials responsible|tender number|tender description|not attached|no indication|"
@@ -103,12 +113,19 @@ def accept_name(name: str) -> str | None:
         name,
         re.I,
     ):
+        REJECTS["malformed"] += 1
         return None
     if re.search(r"\bL\s*[1-8]\b|\bLEVEL\s*[1-8]\b", name, re.I):
+        REJECTS["malformed"] += 1
         return None
     if re.search(r"\b(of an|of the|for a period|until 30)\b", name, re.I):
+        REJECTS["malformed"] += 1
         return None
     if re.search(r"\d\.\d{2}|\b(?:Yes|No)\d|\bRATES\b", name, re.I):
+        REJECTS["malformed"] += 1
+        return None
+    if re.match(r"^(?:NO|YES)\s+\d+\b", name, re.I):
+        REJECTS["malformed"] += 1
         return None
     return name
 
@@ -140,6 +157,7 @@ def parse_drakenstein(path: Path, url: str) -> list[dict]:
         date_raw = cm.group(1)
     award = modern(date_raw)
     if not award or not tender:
+        REJECTS["undated"] += 1
         return []
     body = text
     start = re.search(r"NAME\s+OF\s+TENDERER", text, re.I)
@@ -216,6 +234,7 @@ def parse_swartland(path: Path, url: str) -> list[dict]:
         confirmed = CONFIRM_RE.search(part)
         award = modern(confirmed.group(1) if confirmed else None)
         if not award:
+            REJECTS["undated"] += 1
             continue
         awarded_name = None
         am = AWARD_RE.search(re.sub(r"\s+", " ", part))
@@ -430,6 +449,7 @@ def main() -> None:
         "candidate_rows": len(rows),
         "unique_entities": len(items),
         "skipped": dict(skipped),
+        "rejected_names": dict(REJECTS),
         "by_source": dict(Counter(r["source"] for r in rows)),
     }
     (OUT / "scale-batch-1-summary.json").write_text(json.dumps(summary, indent=2))
