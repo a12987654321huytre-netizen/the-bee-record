@@ -268,23 +268,30 @@ function extractRegistration(text: string): ExtractionClaim | null {
   if (!all.length) return null;
 
   const annexureAt = text.search(/\bannexure\b/i);
-  const measuredAt = text.search(/measured\s+entity/i);
+  const includedAt = text.search(/\bentities\s+included\b/i);
+  const measuredLabelAt = text.search(/(?:^|\n)\s*measured\s+entity\s*(?:\n|:)/i);
   const scored: Array<{ raw: string; score: number; labeled: boolean; index: number }> = [];
   for (const item of all) {
     if (isVerifierRegistration(item.raw)) continue;
     const ctx = lineWindow(text, item.index);
     if (isAgencyOwnedRegistration(ctx)) continue;
-    const blob = `${ctx.previous} ${ctx.line}`;
     const labeled = /(?:company\s+)?(?:registration(?:\s+number)?|reg(?:istration)?(?:\.|\s*)(?:no\.?|number)|enterprise\s+(?:number|registration))/i.test(
       ctx.line,
     );
+    const window = text.slice(Math.max(0, item.index - 240), Math.min(text.length, item.index + 140));
+    // A label on its own line or before a colon. "the measured entity" in
+    // certificate boilerplate must not outrank the measured entity's number.
+    const identityLabel = /(?:^|\n)\s*(?:measured\s+entity|company\s+name|enterprise\s+name|registration\s+number)\s*(?:\n|:)/i.test(
+      window,
+    );
     let score = 1;
-    if (/measured\s+entity|company\s+name|enterprise\s+name/i.test(blob)) score += 6;
+    if (identityLabel) score += 6;
     if (labeled) score += 2;
     if (annexureAt >= 0 && item.index > annexureAt) score -= 8;
-    if (/\bsubsidiar/i.test(ctx.line) && !/measured\s+entity/i.test(blob)) score -= 3;
-    if (measuredAt >= 0) {
-      const dist = Math.abs(item.index - measuredAt);
+    if (includedAt >= 0 && item.index > includedAt) score -= 8;
+    if (/\bsubsidiar/i.test(ctx.line) && !identityLabel) score -= 3;
+    if (measuredLabelAt >= 0) {
+      const dist = Math.abs(item.index - measuredLabelAt);
       if (dist < 250) score += 4;
       else if (dist < 700) score += 2;
     }

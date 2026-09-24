@@ -394,6 +394,30 @@ describe("deterministic extractor", () => {
     assert.equal(fields.issue_date, "2026-06-12");
     assert.equal(fields.expiry_date, "2027-06-11");
   });
+
+  it("does not let certificate boilerplate assign a subsidiary registration", () => {
+    const result = extractDeterministically(`
+      Measured Entity
+      Media24 (Pty) Ltd and Subsidiaries
+      1950/038385/07
+      Company Name
+      Registration Number
+      Level 2 Contributor
+      Issue Date
+      12/06/2026
+      Expiry Date
+      11/06/2027
+      status of the measured entity measured against the Codes.
+      Nasou Via Afrika (Pty) Ltd trading as Via Afrika 1996/012379/07
+      Entities Included in the Consolidated Verification Certificate
+      Jonathan Ball Publishers (Pty) Ltd 1953/000037/07
+    `);
+    const fields = Object.fromEntries(result.claims.map((c) => [c.field, c.normalized_value]));
+    assert.equal(fields.registration_number, "195003838507");
+    assert.equal(fields.bee_level, "2");
+    assert.equal(fields.issue_date, "2026-06-12");
+    assert.equal(fields.expiry_date, "2027-06-11");
+  });
 });
 
 describe("lifecycle classification", () => {
