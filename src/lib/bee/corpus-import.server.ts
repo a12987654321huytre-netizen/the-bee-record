@@ -33,6 +33,10 @@ import type { ExtractionClaim } from "./types.ts";
 export const CORPUS_IMPORT_TOKEN_SHA256 =
   "9040152a95910e520a9d047410a68eb9e6ddd57a1b0ef9b5b8048e95fd6c432b";
 
+/** Second corpus-import bearer, same scope. Plaintext stays in gitignored .corpus-import-token. */
+const CORPUS_IMPORT_TOKEN_SHA256_BATCH =
+  "d85c0f9e775e7f30b17693699926133255362424fba381cb648d576cead652ea";
+
 const ACTOR = "import:corpus-2026";
 
 export type CorpusEvidence = {
@@ -118,7 +122,9 @@ export function authorizeCorpusImport(header: string | null): boolean {
   if (!token) return false;
   const cron = process.env.CRON_SECRET?.trim();
   if (cron && token === cron) return true;
-  return hashesEqual(sha256HexNode(token), CORPUS_IMPORT_TOKEN_SHA256);
+  const digest = sha256HexNode(token);
+  if (hashesEqual(digest, CORPUS_IMPORT_TOKEN_SHA256)) return true;
+  return hashesEqual(digest, CORPUS_IMPORT_TOKEN_SHA256_BATCH);
 }
 
 async function findExistingEntity(
