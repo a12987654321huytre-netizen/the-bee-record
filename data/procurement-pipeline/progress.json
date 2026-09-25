@@ -1,0 +1,10 @@
+{
+  "updated_at": null,
+  "documents": {},
+  "runs": [],
+  "import_checkpoint": {
+    "corpus_file": "data/procurement/corpus-pipeline.json",
+    "next_index": 0,
+    "run_id": null
+  }
+}
