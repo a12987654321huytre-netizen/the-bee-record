@@ -71,3 +71,8 @@ coverage/
 # One-time production import token — never commit
 .corpus-import-token
 .corpus-import-token.sha256
+
+# Procurement pipeline generated output (keep source registry and ledger tracked)
+data/procurement/corpus-pipeline.json
+data/procurement-pipeline/rejected.json
+data/procurement-pipeline/import-checkpoint.json

@@ -3,7 +3,7 @@
  * Posts procurement-disclosure corpus batches to live /api/corpus-import.
  * Token is read from .corpus-import-token (gitignored).
  */
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const PROD = process.env.CORPUS_IMPORT_URL ?? "https://the-bee-record.vercel.app";
@@ -14,6 +14,7 @@ const checkpointPath = resolve(
   process.cwd(),
   process.env.CORPUS_CHECKPOINT ?? "data/procurement-pipeline/import-checkpoint.json",
 );
+const progressPath = resolve(process.cwd(), process.env.CORPUS_PROGRESS ?? "data/procurement-pipeline/progress.json");
 const runId = process.env.CORPUS_RUN_ID ?? `run-${Date.now()}`;
 
 function readCheckpoint() {
@@ -26,6 +27,31 @@ function readCheckpoint() {
 
 function writeCheckpoint(payload) {
   writeFileSync(checkpointPath, JSON.stringify({ ...payload, runId, at: new Date().toISOString() }, null, 2));
+}
+
+function markDocumentsImported(batch) {
+  let progress;
+  try {
+    progress = JSON.parse(readFileSync(progressPath, "utf8"));
+  } catch {
+    return;
+  }
+  const urls = new Set(batch.flatMap((item) => (item.procurement ?? []).map((row) => row.sourceUrl).filter(Boolean)));
+  let changed = false;
+  for (const doc of Object.values(progress.documents ?? {})) {
+    if (urls.has(doc.source_url)) {
+      doc.import_status = "IMPORTED";
+      doc.imported_content_hash = doc.content_hash;
+      doc.status = "IMPORTED";
+      doc.imported_at = new Date().toISOString();
+      changed = true;
+    }
+  }
+  if (changed) {
+    const tempPath = `${progressPath}.tmp`;
+    writeFileSync(tempPath, `${JSON.stringify(progress, null, 2)}\n`);
+    renameSync(tempPath, progressPath);
+  }
 }
 
 const token = readFileSync(tokenPath, "utf8").trim();
@@ -131,6 +157,7 @@ for (let i = 0; i < slice.length; i += batchSize) {
     continue;
   }
   const results = last.json.results ?? [];
+  markDocumentsImported(batch);
   for (const row of results) {
     ok += 1;
     if (row.created) created += 1;

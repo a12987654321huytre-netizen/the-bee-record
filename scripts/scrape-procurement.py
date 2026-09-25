@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from datetime import date
 
-ROOT = Path("/workspace")
+ROOT = Path(__file__).resolve().parents[1]
 SRC = Path("/tmp/bee-sources")
 OUT = ROOT / "data" / "procurement"
 OUT.mkdir(parents=True, exist_ok=True)

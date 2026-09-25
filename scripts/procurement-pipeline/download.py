@@ -26,19 +26,20 @@ UA = "TheBEERecord/1.0 research bot (public procurement evidence index; +https:/
 
 def fetch(url: str, dest: Path, timeout: int = 45) -> tuple[bool, str, str | None]:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists() and dest.stat().st_size > 800:
-        digest = content_hash_bytes(dest.read_bytes())
-        return True, "exists", digest
     req = Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
     try:
         with urlopen(req, timeout=timeout) as resp:
             data = resp.read()
-        dest.write_bytes(data)
+        if not data:
+            return False, "empty response", None
+        temp = dest.with_suffix(dest.suffix + ".part")
+        temp.write_bytes(data)
+        temp.replace(dest)
         return True, f"ok {len(data)}", content_hash_bytes(data)
     except HTTPError as e:
         return False, f"http {e.code}", None
     except Exception as e:
-        return False, type(e).__name__, None
+        return False, f"{type(e).__name__}: {e}", None
 
 
 def download_pending(limit: int | None = None) -> dict:
@@ -51,24 +52,26 @@ def download_pending(limit: int | None = None) -> dict:
             continue
         for url in family.get("seed_urls", []):
             doc = ensure_document(progress, family, url)
-            if doc.get("status") == "IMPORTED" and doc.get("content_hash"):
-                skipped += 1
-                continue
             dest = local_path_for(doc)
             prev_hash = doc.get("content_hash")
             success, msg, digest = fetch(url, dest)
             doc["last_attempted"] = utc_now()
             doc["local_path"] = str(dest)
             if success:
-                ok += 1
                 doc["download_status"] = "DOWNLOADED"
-                if digest and prev_hash and digest != prev_hash:
+                doc["download_hash"] = digest
+                if digest and prev_hash and digest == prev_hash and doc.get("import_status") == "IMPORTED" and doc.get("imported_content_hash", prev_hash) == digest:
+                    skipped += 1
+                    doc["status"] = "IMPORTED"
+                    doc["parser_status"] = "unchanged"
+                elif digest and prev_hash and digest != prev_hash:
+                    ok += 1
                     doc["status"] = "DISCOVERED"
                     doc["parser_status"] = "changed"
                     doc["last_error"] = "content_hash_changed"
-                elif doc.get("status") in (None, "DISCOVERED", "BLOCKED", "FAILED"):
+                else:
+                    ok += 1
                     doc["status"] = "DOWNLOADED"
-                doc["content_hash"] = digest
             else:
                 fail += 1
                 doc["download_status"] = "BLOCKED"
