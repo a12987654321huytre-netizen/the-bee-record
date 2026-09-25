@@ -10,6 +10,23 @@ const PROD = process.env.CORPUS_IMPORT_URL ?? "https://the-bee-record.vercel.app
 const tokenPath = resolve(process.cwd(), ".corpus-import-token");
 const corpusPath = resolve(process.cwd(), process.argv[2] ?? "data/procurement/corpus-new.json");
 const logPath = resolve(process.cwd(), process.env.CORPUS_LOG ?? "data/procurement-import-log.jsonl");
+const checkpointPath = resolve(
+  process.cwd(),
+  process.env.CORPUS_CHECKPOINT ?? "data/procurement-pipeline/import-checkpoint.json",
+);
+const runId = process.env.CORPUS_RUN_ID ?? `run-${Date.now()}`;
+
+function readCheckpoint() {
+  try {
+    return JSON.parse(readFileSync(checkpointPath, "utf8"));
+  } catch {
+    return { nextIndex: 0, runId, corpusPath };
+  }
+}
+
+function writeCheckpoint(payload) {
+  writeFileSync(checkpointPath, JSON.stringify({ ...payload, runId, at: new Date().toISOString() }, null, 2));
+}
 
 const token = readFileSync(tokenPath, "utf8").trim();
 const corpus = JSON.parse(readFileSync(corpusPath, "utf8"));
@@ -19,11 +36,16 @@ if (!Array.isArray(items) || !items.length) {
   process.exit(1);
 }
 
-const start = Number(process.env.CORPUS_START ?? 0);
 const limit = Number(process.env.CORPUS_LIMIT ?? items.length);
 const batchSize = Math.min(25, Math.max(1, Number(process.env.CORPUS_BATCH ?? 8)));
-const slice = items.slice(start, start + limit);
 const retries = Number(process.env.CORPUS_RETRIES ?? 2);
+const prior = readCheckpoint();
+const start =
+  process.env.CORPUS_START != null && process.env.CORPUS_START !== ""
+    ? Number(process.env.CORPUS_START)
+    : Number(prior.nextIndex ?? 0);
+const slice = items.slice(start, start + limit);
+writeCheckpoint({ nextIndex: start, corpusPath, status: "started" });
 
 async function post(path, body, timeoutMs = 120_000) {
   const res = await fetch(`${PROD}${path}`, {
@@ -102,6 +124,7 @@ for (let i = 0; i < slice.length; i += batchSize) {
     error: !last?.json?.ok ? last?.json?.error ?? last?.json : undefined,
   };
   appendFileSync(logPath, JSON.stringify(record) + "\n");
+  writeCheckpoint({ nextIndex: end, corpusPath, status: last?.json?.ok ? "running" : "batch_error", lastStatus: last?.status });
   if (!last?.json?.ok) {
     fail += batch.length;
     console.log(`HTTP ${last?.status}`, last?.json?.error ?? last?.json);
